@@ -36,6 +36,17 @@ pub fn main() !u8 {
         return 0;
     }
 
-    std.debug.print("Hello world!\n", .{});
+    var file = try std.fs.cwd().openFile("test/test.txt", .{});
+    defer file.close();
+
+    var buf_reader = std.io.bufferedReader(file.reader());
+    var reader = buf_reader.reader();
+    var seekable_stream = file.seekableStream();
+
+    try seekable_stream.seekTo(5);
+    var buf: [12]u8 = .{0} ** 12;
+    _ = try reader.read(&buf);
+
+    std.log.debug("{s}\n", .{buf});
     return 0;
 }
