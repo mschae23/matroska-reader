@@ -11,6 +11,12 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const zigargs_dep = b.dependency("zigargs", .{
+        // .target = target,
+        // .optimize = optimize,
+    });
+    exe.addModule("zigargs", zigargs_dep.module("args"));
+
     b.installArtifact(exe);
     const run_cmd = b.addRunArtifact(exe);
 
