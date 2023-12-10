@@ -10,7 +10,6 @@ pub fn main() !u8 {
         help: bool = false,
         version: bool = false,
 
-        // This declares short-hand options for single hyphen
         pub const shorthands = .{
             .h = "help",
             .v = "version",
