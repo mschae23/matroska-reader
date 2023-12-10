@@ -1,9 +1,9 @@
 const std = @import("std");
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
-    defer std.debug.assert(gpa.deinit() == .ok);
-    const allocator = gpa.allocator();
+    // var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
+    // defer std.debug.assert(gpa.deinit() == .ok);
+    // const allocator = gpa.allocator();
 
     const file = try std.fs.cwd().openFile("../info/matroska_spec.txt", .{});
     defer file.close();
@@ -12,7 +12,7 @@ pub fn main() !void {
     var buffered_reader = std.io.bufferedReader(intermediate_reader);
     var reader = buffered_reader.reader();
     
-    var buf: [64]u8 = .{@as(u8, 0)} ** 64;
+    var buf: [256]u8 = .{@as(u8, 0)} ** 256;
     var fixedBufferStream = std.io.fixedBufferStream(&buf);
     const buf_writer = fixedBufferStream.writer();
 
@@ -22,53 +22,78 @@ pub fn main() !void {
    
     try writer.writeAll("// This file is auto-generated.\n\npub const IdInfo = struct {\n    id: u32,\n    name: []const u8,\n};\n\npub const elements = [_]IdInfo {\n");
 
+    const IdInfo = struct {
+        id: u32,
+        name: []const u8,
+    };
+    
+    const ebml_elements = [_]IdInfo {
+        IdInfo { .id = 0x1A45DFA3, .name = "EBML",                    },
+        IdInfo { .id = 0x4286    , .name = "EBMLVersion",             },
+        IdInfo { .id = 0x42F7    , .name = "EBMLReadVersion",         },
+        IdInfo { .id = 0x42F2    , .name = "EBMLMaxIDLength",         },
+        IdInfo { .id = 0x42F3    , .name = "EBMLMaxSizeLength",       },
+        IdInfo { .id = 0x4282    , .name = "DocType",                 },
+        IdInfo { .id = 0x4287    , .name = "DocTypeVersion",          },
+        IdInfo { .id = 0x4285    , .name = "DocTypeReadVersion",      },
+        IdInfo { .id = 0x4281    , .name = "DocTypeExtension",        },
+        IdInfo { .id = 0x4283    , .name = "DocTypeExtensionName",    },
+        IdInfo { .id = 0x4284    , .name = "DocTypeExtensionVersion", },
+        IdInfo { .id = 0xEC      , .name = "Void",                    },
+        IdInfo { .id = 0xBF      , .name = "CRC32",                   },
+    };
+
+    for (ebml_elements) |info| {
+        std.debug.print("Found: {s} (ID 0x{X})\n", .{info.name, info.id});
+        try writer.print("    IdInfo {{ .id = 0x{X}, .name = \"{s}\", }},\n", .{info.id, info.name});
+    }
+
     while (true) {
+        // std.debug.print("Loop\n", .{});
+
         fixedBufferStream.pos = 0;
-        reader.streamUntilDelimiter(buf_writer, '\n', 64) catch |err| switch (err) {
+        reader.streamUntilDelimiter(buf_writer, '\n', 256) catch |err| switch (err) {
             error.StreamTooLong, error.NoSpaceLeft => continue,
-            error.EndOfStream => return,
+            error.EndOfStream => break,
             else => return err,
         };
 
-        if (std.mem.startsWith(u8, &buf, "6.")) {
-            break;
-        }
+        if (std.mem.startsWith(u8, &buf, "  <element name=\"")) {
+            const name_start_pos: u8 = 17;
+            var name_end_pos: u8 = 18;
 
-        if (std.mem.startsWith(u8, &buf, "5.1.")) {
-            var pos: u8 = 4;
-
-            if (buf[pos] != ' ') {
-                while (buf[pos] >= '0' and buf[pos] <= '9' or buf[pos] == '.') {
-                    pos += 1;
-                }
-
-                if (buf[pos] != ' ') {
-                    continue;
-                }
+            while (buf[name_end_pos] != '"' and name_end_pos <= buf.len) {
+                name_end_pos += 1;
             }
 
-            std.debug.assert(buf[pos] == ' ');
-            std.debug.assert(buf[pos + 1] == ' ');
-            pos += 2;
+            var id_start_pos: u8 = name_end_pos + 1;
 
-            var pos_2: u8 = pos + 1;
-
-            while (buf[pos_2] != ' ') {
-                pos_2 += 1;
+            while ((buf[id_start_pos] != 'i' or buf[id_start_pos + 1] != 'd' or buf[id_start_pos + 2] != '=' or buf[id_start_pos + 3] != '"') and id_start_pos < buf.len - 4) {
+                id_start_pos += 1;
             }
 
-            const name = try allocator.dupe(u8, buf[pos..pos_2]);
-            defer allocator.free(name);
+            if (id_start_pos == buf.len - 4) {
+                continue;
+            }
 
-            fixedBufferStream.pos = 0;
-            try reader.streamUntilDelimiter(buf_writer, '0', 64);
-            fixedBufferStream.pos = 0;
-            try reader.streamUntilDelimiter(buf_writer, ' ', 64);
+            id_start_pos += 4;
+            var id_end_pos: u8 = id_start_pos + 1;
 
-            const id = buf[0..fixedBufferStream.pos];
-            std.debug.print("Found: {s} (ID 0{s})\n", .{name, id});
+            while (buf[id_end_pos] != '"' and id_end_pos <= buf.len) {
+                id_end_pos += 1;
+            }
 
-            try writer.print("    IdInfo {{ .id = 0{s}, .name = \"{s}\", }},\n", .{id, name});
+            const name = buf[name_start_pos..name_end_pos];
+            const id = buf[id_start_pos..id_end_pos];
+
+            std.debug.print("Found: {s} (ID {s})\n", .{name, id});
+
+            if (std.mem.startsWith(u8, name, "EBML")) {
+                std.debug.print("Skipping.\n", .{});
+                continue;
+            }
+
+            try writer.print("    IdInfo {{ .id = {s}, .name = \"{s}\", }},\n", .{id, name});
         }
     }
 
