@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const MATROSKA_VERSION: u8 = 4;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -20,7 +22,7 @@ pub fn main() !void {
     defer output.close();
     const writer = output.writer();
    
-    try writer.writeAll("// This file is auto-generated.\n\npub const ElementType = enum {\n    integer,\n    uinteger,\n    float,\n    string,\n    date,\n    utf8,\n    master,\n    binary,\n};\n\npub const Importance = enum {\n    hot,\n    important,\n    default,\n};\n\npub const ElementInfo = struct {\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n    importance: Importance = .default,\n    deprecated: bool = false,\n};\n\npub const IdInfo = struct {\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n};\n\npub const elements = [_]ElementInfo {\n");
+    try writer.print("// This file was auto-generated.\n\npub const MATROSKA_VERSION: u8 = {d};\n\npub const ElementType = enum {{\n    integer,\n    uinteger,\n    float,\n    string,\n    date,\n    utf8,\n    master,\n    binary,\n}};\n\npub const Importance = enum {{\n    hot,\n    important,\n    default,\n}};\n\npub const ElementInfo = struct {{\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n    importance: Importance = .default,\n    deprecated: bool = false,\n}};\n\npub const IdInfo = struct {{\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n}};\n\npub const ELEMENTS = [_]ElementInfo {{\n", .{MATROSKA_VERSION});
 
     const ElementType = enum {
         integer,
@@ -215,7 +217,7 @@ pub fn main() !void {
 
             var hot = false;
             var important = false;
-            const deprecated = max_version < 4;
+            const deprecated = max_version < MATROSKA_VERSION;
             const parsed_id = try std.fmt.parseUnsigned(u32, id, 0);
             const duped_name = try allocator.dupe(u8, name);
 
@@ -242,13 +244,13 @@ pub fn main() !void {
         }
     }
 
-    try writer.writeAll("};\n\npub const hot_elements = [_]IdInfo {\n");
+    try writer.writeAll("};\n\npub const HOT_ELEMENTS = [_]IdInfo {\n");
 
     for (hot_info.items) |info| {
         try writer.print("    IdInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\" }},\n", .{info.id, info.type.toString(), info.name});
     }
 
-    try writer.writeAll("};\n\npub const important_elements = [_]IdInfo {\n");
+    try writer.writeAll("};\n\npub const IMPORTANT_ELEMENTS = [_]IdInfo {\n");
 
     for (important_info.items) |info| {
         try writer.print("    IdInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\" }},\n", .{info.id, info.type.toString(), info.name});

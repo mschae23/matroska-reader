@@ -1,4 +1,6 @@
-// This file is auto-generated.
+// This file was auto-generated.
+
+pub const MATROSKA_VERSION: u8 = 4;
 
 pub const ElementType = enum {
     integer,
@@ -31,7 +33,7 @@ pub const IdInfo = struct {
     name: []const u8,
 };
 
-pub const elements = [_]ElementInfo {
+pub const ELEMENTS = [_]ElementInfo {
     ElementInfo { .id = 0x1A45DFA3, .type = .master, .name = "EBML", },
     ElementInfo { .id = 0x4286, .type = .uinteger, .name = "EBMLVersion", },
     ElementInfo { .id = 0x42F7, .type = .uinteger, .name = "EBMLReadVersion", },
@@ -306,13 +308,13 @@ pub const elements = [_]ElementInfo {
     ElementInfo { .id = 0x4485, .type = .binary, .name = "TagBinary", },
 };
 
-pub const hot_elements = [_]IdInfo {
+pub const HOT_ELEMENTS = [_]IdInfo {
     IdInfo { .id = 0x1F43B675, .type = .master, .name = "Cluster" },
     IdInfo { .id = 0xE7, .type = .uinteger, .name = "Timestamp" },
     IdInfo { .id = 0xA3, .type = .binary, .name = "SimpleBlock" },
 };
 
-pub const important_elements = [_]IdInfo {
+pub const IMPORTANT_ELEMENTS = [_]IdInfo {
     IdInfo { .id = 0x18538067, .type = .master, .name = "Segment" },
     IdInfo { .id = 0x1549A966, .type = .master, .name = "Info" },
     IdInfo { .id = 0x2AD7B1, .type = .uinteger, .name = "TimestampScale" },
