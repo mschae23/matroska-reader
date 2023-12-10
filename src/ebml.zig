@@ -75,3 +75,7 @@ test "readVint (2 in different sizes)" {
         std.debug.assert(2 == value);
     }
 }
+
+pub fn readElementId(reader: std.io.AnyReader) anyerror!u32 {
+    return readVint(reader);
+}
