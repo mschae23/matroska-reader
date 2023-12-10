@@ -1,9 +1,9 @@
 const std = @import("std");
 
 pub fn main() !void {
-    // var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
-    // defer std.debug.assert(gpa.deinit() == .ok);
-    // const allocator = gpa.allocator();
+    var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
+    defer std.debug.assert(gpa.deinit() == .ok);
+    const allocator = gpa.allocator();
 
     const file = try std.fs.cwd().openFile("../info/matroska_spec.txt", .{});
     defer file.close();
@@ -20,7 +20,7 @@ pub fn main() !void {
     defer output.close();
     const writer = output.writer();
    
-    try writer.writeAll("// This file is auto-generated.\n\npub const IdInfo = struct {\n    id: u32,\n    name: []const u8,\n};\n\npub const elements = [_]IdInfo {\n");
+    try writer.writeAll("// This file is auto-generated.\n\npub const Importance = enum {\n    hot,\n    important,\n    default,\n};\n\npub const ElementInfo = struct {\n    id: u32,\n    name: []const u8,\n    importance: Importance,\n};\n\npub const IdInfo = struct {\n    id: u32,\n    name: []const u8,\n};\n\npub const elements = [_]ElementInfo {\n");
 
     const IdInfo = struct {
         id: u32,
@@ -43,10 +43,47 @@ pub fn main() !void {
         IdInfo { .id = 0xBF      , .name = "CRC32",                   },
     };
 
+    const hot_elements = [_][]const u8 {
+        "Cluster",
+        "SimpleBlock",
+        "Timestamp",
+    };
+
+    const important_elements = [_][]const u8 {
+        "Segment",
+        "Info",
+        "TimestampScale",
+        "Cluster",
+        "Timestamp",
+        "SimpleBlock",
+        "BlockGroup",
+        "Block",
+        "BlockDuration",
+        "Tracks",
+        "TrackEntry",
+        "TrackNumber",
+        "TrackType",
+        "CodecID",
+        "CodecPrivate",
+        "Video",
+        "PixelWidth",
+        "PixelHeight",
+        "Audio",
+        "SamplingFrequency",
+        "Channels",
+        "ContentCompression",
+    };
+
     for (ebml_elements) |info| {
         std.debug.print("Found: {s} (ID 0x{X})\n", .{info.name, info.id});
-        try writer.print("    IdInfo {{ .id = 0x{X}, .name = \"{s}\", }},\n", .{info.id, info.name});
+        try writer.print("    ElementInfo {{ .id = 0x{X}, .name = \"{s}\", .importance = .default, }},\n", .{info.id, info.name, });
     }
+
+    var hot_info = std.ArrayList(IdInfo).init(allocator);
+    defer hot_info.deinit();
+
+    var important_info = std.ArrayList(IdInfo).init(allocator);
+    defer important_info.deinit();
 
     while (true) {
         // std.debug.print("Loop\n", .{});
@@ -93,8 +130,43 @@ pub fn main() !void {
                 continue;
             }
 
-            try writer.print("    IdInfo {{ .id = {s}, .name = \"{s}\", }},\n", .{id, name});
+            var hot = false;
+            var important = false;
+
+            for (hot_elements) |element| {
+                if (std.mem.eql(u8, element, name)) {
+                    hot = true;
+                    try hot_info.append(IdInfo { .id = try std.fmt.parseUnsigned(u32, id, 0), .name = try allocator.dupe(u8, name), });
+                    break;
+                }
+            }
+
+            if (!hot) {
+                for (important_elements) |element| {
+                    if (std.mem.eql(u8, element, name)) {
+                        important = true;
+                        try important_info.append(IdInfo { .id = try std.fmt.parseUnsigned(u32, id, 0), .name = try allocator.dupe(u8, name), });
+                        break;
+                    }
+                }
+            }
+
+            try writer.print("    ElementInfo {{ .id = {s}, .name = \"{s}\", .importance = {s}, }},\n", .{id, name, if (hot) ".hot" else if (important) ".important" else ".default", });
         }
+    }
+
+    try writer.writeAll("};\n\npub const hot_elements = [_]IdInfo {\n");
+
+    for (hot_info.items) |info| {
+        try writer.print("    IdInfo {{ .id = 0x{X}, .name = \"{s}\" }},\n", .{info.id, info.name});
+        allocator.free(info.name);
+    }
+
+    try writer.writeAll("};\n\npub const important_elements = [_]IdInfo {\n");
+
+    for (important_info.items) |info| {
+        try writer.print("    IdInfo {{ .id = 0x{X}, .name = \"{s}\" }},\n", .{info.id, info.name});
+        allocator.free(info.name);
     }
 
     try writer.writeAll("};\n");
