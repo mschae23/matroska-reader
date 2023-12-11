@@ -32,6 +32,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    unit_tests.addModule("zigargs", zigargs_dep.module("args"));
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 

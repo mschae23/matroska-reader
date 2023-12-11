@@ -1,6 +1,8 @@
 const std = @import("std");
 const zigargs = @import("zigargs");
 
+pub const ebml = @import("./ebml.zig");
+
 pub fn main() !u8 {
     var gpa = std.heap.GeneralPurposeAllocator(.{}) {};
     defer std.debug.assert(gpa.deinit() == .ok);
@@ -36,4 +38,8 @@ pub fn main() !u8 {
     }
 
     return 0;
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
