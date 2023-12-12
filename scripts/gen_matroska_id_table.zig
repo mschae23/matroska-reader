@@ -7,21 +7,21 @@ pub fn main() !void {
     defer std.debug.assert(gpa.deinit() == .ok);
     const allocator = gpa.allocator();
 
-    const file = try std.fs.cwd().openFile("../info/matroska_spec.txt", .{});
+    const file = try std.fs.cwd().openFile("./matroska_schema.xml", .{});
     defer file.close();
 
     const intermediate_reader = file.reader();
     var buffered_reader = std.io.bufferedReader(intermediate_reader);
     var reader = buffered_reader.reader();
-    
+
     var buf: [256]u8 = .{@as(u8, 0)} ** 256;
     var fixedBufferStream = std.io.fixedBufferStream(&buf);
     const buf_writer = fixedBufferStream.writer();
 
-    const output = try std.fs.cwd().createFile("./table.zig", .{});
+    const output = try std.fs.cwd().createFile("../src/matroska_id_table.zig", .{});
     defer output.close();
     const writer = output.writer();
-   
+
     try writer.print("// This file was auto-generated.\n\npub const MATROSKA_VERSION: u8 = {d};\n\npub const ElementType = enum {{\n    integer,\n    uinteger,\n    float,\n    string,\n    date,\n    utf8,\n    master,\n    binary,\n}};\n\npub const Importance = enum {{\n    hot,\n    important,\n    default,\n}};\n\npub const ElementInfo = struct {{\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n    importance: Importance = .default,\n    deprecated: bool = false,\n}};\n\npub const IdInfo = struct {{\n    id: u32,\n    type: ElementType,\n    name: []const u8,\n}};\n\npub const ELEMENTS = [_]ElementInfo {{\n", .{MATROSKA_VERSION});
 
     const ElementType = enum {
@@ -47,14 +47,14 @@ pub fn main() !void {
             };
         }
     };
-    
+
     const IdInfo = struct {
         id: u32,
         type: ElementType,
         name: []const u8,
         deprecated: bool,
     };
-    
+
     const ebml_elements = [_]IdInfo {
         IdInfo { .id = 0x1A45DFA3, .type = .master,   .name = "EBML",                    .deprecated = false, },
         IdInfo { .id = 0x4286    , .type = .uinteger, .name = "EBMLVersion",             .deprecated = false, },

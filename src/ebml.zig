@@ -522,3 +522,5 @@ test "readFloat" {
         std.debug.assert(expected == value);
     }
 }
+
+// TODO Add tests for the readBinary functions and readDate
