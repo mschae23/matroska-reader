@@ -191,8 +191,9 @@ pub inline fn readElementDataSize(reader: std.io.AnyReader) anyerror!u64 {
 
 /// Read a signed integer element.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position
-/// must be on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readSignedInteger(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
     const size = try readElementDataSize(reader);
 
@@ -212,8 +213,9 @@ pub fn readSignedInteger(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
 
 /// Read an unsigned integer element.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position
-/// must be on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readUnsignedInteger(reader: std.io.AnyReader, default: ?u64) anyerror!u64 {
     const size = try readElementDataSize(reader);
 
@@ -233,8 +235,9 @@ pub fn readUnsignedInteger(reader: std.io.AnyReader, default: ?u64) anyerror!u64
 
 /// Read a floating-point integer element.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position
-/// must be on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readFloat(reader: std.io.AnyReader, default: ?f64) anyerror!f64 {
     const size = try readElementDataSize(reader);
 
@@ -268,8 +271,9 @@ pub fn readFloat(reader: std.io.AnyReader, default: ?f64) anyerror!f64 {
 ///
 /// Caller owns buffer memory.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position must be
-/// on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readBinaryAllBuf(reader: std.io.AnyReader, buffer: []u8) anyerror!void {
     const size = try readElementDataSize(reader);
 
@@ -296,8 +300,9 @@ pub fn readBinaryAllBuf(reader: std.io.AnyReader, buffer: []u8) anyerror!void {
 ///
 /// Caller owns returned memory.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position must be
-/// on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readBinaryAllAlloc(reader: std.io.AnyReader, allocator: std.mem.Allocator, max_size: usize) anyerror![]u8 {
     const size = try readElementDataSize(reader);
 
@@ -312,6 +317,34 @@ pub fn readBinaryAllAlloc(reader: std.io.AnyReader, allocator: std.mem.Allocator
     }
 
     return buf;
+}
+
+const BinaryElementReaderContext = struct {
+    reader: std.io.AnyReader,
+    pos: u64, len: u64,
+};
+
+pub const BinaryElementReader = std.io.GenericReader(BinaryElementReaderContext, anyerror, readBinaryImpl);
+
+/// Read a binary element. This returns a [`BinaryElementReader`] that can be used to read the binary element's data.
+///
+/// The returned reader is invalidated by any operation modifying the position of the reader provided to this method, such as using any
+/// of its read functions or seeking with a `SeekableStream`.
+///
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
+pub fn readBinary(reader: std.io.AnyReader) anyerror!BinaryElementReader {
+    const size = try readElementDataSize(reader);
+    return .{ .context = BinaryElementReaderContext { .reader = reader, .pos = 0, .len = size, }};
+}
+
+// Implement SeekableStream for this as well? Not sure how useful that would be
+// Also, AnySeekableStream doesn't exist
+fn readBinaryImpl(context: BinaryElementReaderContext, buffer: []u8) anyerror!usize {
+    const read = try context.reader.read(buffer[0..@min(buffer.len, context.len - context.pos)]);
+    context.pos += read;
+    return read;
 }
 
 /// Read a date element.
@@ -338,8 +371,9 @@ pub fn readBinaryAllAlloc(reader: std.io.AnyReader, allocator: std.mem.Allocator
 /// You can use `readSignedInteger` instead, which allows any element size between 0 and 8 (inclusive), if you want to be more
 /// lenient in parsing dates.
 ///
-/// This function requires the element ID to have been read already, i. e. the input stream position
-/// must be on the element size value of the element.
+/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
 pub fn readDate(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
     const size = try readElementDataSize(reader);
 
