@@ -8,6 +8,76 @@ pub const EbmlError = error {
     VintTooLarge,
 };
 
+pub const EBML_VERSION: u8 = 1;
+pub const VINTMAX: u64 = 72_057_594_037_927_934; // 2^56 - 2
+
+pub const MAX_NESTING_DEPTH: u8 = 16;
+
+pub const ElementId = struct {
+    id: u64,
+};
+
+pub const MasterElementNestData = struct {
+    id: ElementId,
+    end_pos: usize,
+};
+
+pub const DoctypeExtension = struct {
+    name: []const u8, // Owned by EbmlDocument
+    version: u32,
+};
+
+pub const EbmlDocument = struct {
+    allocator: std.mem.Allocator,
+    reader: std.io.AnyReader,
+    seeker: std.fs.File.SeekableStream,
+
+    ebml_version: u8, ebml_read_version: u8, // There only exists EBML version 1 at the time of writing
+    ebml_max_id_length: u8, // 4 by default, this reader only supports length <=8
+    ebml_max_size_length: u8, // 8 by default, this reader only supports length <=8
+    doctype: []const u8, // DocType, owned by EbmlDocument
+    doctype_version: u32, doctype_read_version: u32, // DocType version (for example, 4 for Matroska at the time of writing)
+    doctype_extensions: std.ArrayListUnmanaged(DoctypeExtension), // Owned by EbmlDocument
+
+    path: [MAX_NESTING_DEPTH]MasterElementNestData,
+    path_len: u8,
+
+    /// Initializes a new EbmlDocument.
+    /// 
+    /// `seeker` is required to be the `SeekableStream` for `reader`.
+    /// 
+    /// The provided allocator is only used for runtime-sized data in the EBML header,
+    /// not for anything in the EBML body.
+    pub fn init(allocator: std.mem.Allocator, reader: std.io.AnyReader, seeker: std.fs.File.SeekableStream) std.mem.Allocator.Error!EbmlDocument {
+        return EbmlDocument {
+            .allocator = allocator,
+            .reader = reader, .seeker = seeker,
+
+            .ebml_version = EBML_VERSION + 1, .ebml_read_version = EBML_VERSION + 1,
+            .ebml_max_id_length = 4, .ebml_max_size_length = 8,
+            .doctype = &.{},
+            .doctype_version = std.math.maxInt(u32), .doctype_read_version = std.math.maxInt(u32),
+            .doctype_extensions = try std.ArrayListUnmanaged(DoctypeExtension).initCapacity(allocator, 0),
+
+            .path = .{undefined} ** MAX_NESTING_DEPTH,
+            .path_len = 0,
+        };
+    }
+
+    pub fn deinit(self: *EbmlDocument) void {
+        if (self.doctype.len != 0) {
+            // DocType should be longer than 0 characters, so if len == 0, it hasn't been initialized yet
+            self.allocator.free(self.doctype);
+        }
+
+        for (self.doctype_extensions.items) |extension| {
+            self.allocator.free(extension.name);
+        }
+
+        self.doctype_extensions.deinit(self.allocator);
+    }
+};
+
 pub const RawVint = struct {
     octets: u8,
     raw: u64,
@@ -56,6 +126,85 @@ pub inline fn readVint(reader: std.io.AnyReader) anyerror!u64 {
     return getVintValue(try readVintRaw(reader));
 }
 
+pub inline fn readElementId(reader: std.io.AnyReader) anyerror!u32 {
+    // Don't check whether the ID is encoded in an invalid way
+    return try readVint(reader);
+}
+
+pub const UNKNOWN_DATA_SIZE: u64 = std.math.maxInt(u64);
+
+pub inline fn readElementDataSize(reader: std.io.AnyReader) anyerror!u64 {
+    const vint = try readVintRaw(reader);
+    const value = getVintValue(vint);
+
+    // std.debug.print("Reading element ID (octets: {d}, value: {d}, 0b{b}, 0x{X})\n", .{vint.octets, value, value, value});
+    
+    if (value == (@as(u64, 1) << @as(u6, @intCast(7 * vint.octets))) - 1) {
+        // Element has an unknown data size. It is fine to use 2^64 - 1 (all u64 bits set to 1) as
+        // a special indicator for that here, as that is out of bounds of the element data size value.
+        return UNKNOWN_DATA_SIZE;
+    } else {
+        return value;
+    }
+}
+
+// The following typed read functions assume element ID was already read in the buffer, meaning
+// the buffer position is on the first byte of the element data size
+
+pub fn readSignedInteger(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
+    const size = try readElementDataSize(reader);
+    
+    if (size == 0) {
+        return default orelse 0;
+    } else if (size > 8) {
+        return error.InvalidElementSize;
+    } else {
+        var bytes: [8]u8 = .{0} ** 8;
+        try reader.readNoEof(bytes[0..size]);
+        const value = std.mem.bigToNative(i64, std.mem.bytesToValue(i64, &bytes)) >> @as(u6, @intCast((8 - size) * 8));
+
+        // std.debug.print("0b{b:0>64}, {d}\n", .{value, value});
+        return value;
+    }
+}
+
+pub fn readUnsignedInteger(reader: std.io.AnyReader, default: ?u64) anyerror!u64 {
+    const size = try readElementDataSize(reader);
+    
+    if (size == 0) {
+        return default orelse 0;
+    } else if (size > 8) {
+        return error.InvalidElementSize;
+    } else {
+        var bytes: [8]u8 = .{0} ** 8;
+        try reader.readNoEof(bytes[0..size]);
+        const value = std.mem.bigToNative(u64, std.mem.bytesToValue(u64, &bytes)) >> @as(u6, @intCast((8 - size) * 8));
+
+        // std.debug.print("0b{b:0>64}, {d}\n", .{value, value});
+        return value;
+    }
+}
+
+pub fn readFloat(reader: std.io.AnyReader, default: ?f64) anyerror!f64 {
+    const size = try readElementDataSize(reader);
+    
+    if (size == 0) {
+        return default orelse 0;
+    } else if (size == 4) {
+        var bytes: [4]u8 = .{0} ** 4;
+        try reader.readNoEof(&bytes);
+        const value = @as(f32, @bitCast(std.mem.bigToNative(u32, std.mem.bytesToValue(u32, &bytes))));
+        return @as(f64, value);
+    } else if (size == 8) {
+        var bytes: [8]u8 = .{0} ** 8;
+        try reader.readNoEof(&bytes);
+        const value = @as(f64, @bitCast(std.mem.bigToNative(u64, std.mem.bytesToValue(u64, &bytes))));
+        return value;
+    } else {
+        return error.InvalidElementSize;
+    }
+}
+
 test "readVint (2 in different sizes)" {
     const a: u32 = 0b1000_0010_0000_0000_0000_0000_0000_0000;
     const b: u32 = 0b0100_0000_0000_0010_0000_0000_0000_0000;
@@ -78,28 +227,6 @@ test "readVint (2 in different sizes)" {
         // std.debug.print("Value: {d} ({b})\n", .{value, value});
 
         std.debug.assert(2 == value);
-    }
-}
-
-pub inline fn readElementId(reader: std.io.AnyReader) anyerror!u32 {
-    // Don't check whether the ID is encoded in an invalid way
-    return try readVint(reader);
-}
-
-pub const UNKNOWN_DATA_SIZE: u64 = std.math.maxInt(u64);
-
-pub inline fn readElementDataSize(reader: std.io.AnyReader) anyerror!u64 {
-    const vint = try readVintRaw(reader);
-    const value = getVintValue(vint);
-
-    // std.debug.print("Reading element ID (octets: {d}, value: {d}, 0b{b}, 0x{X})\n", .{vint.octets, value, value, value});
-    
-    if (value == (@as(u64, 1) << @as(u6, @intCast(7 * vint.octets))) - 1) {
-        // Element has an unknown data size. It is fine to use 2^64 - 1 (all u64 bits set to 1) as
-        // a special indicator for that here, as that is out of bounds of the element data size value.
-        return UNKNOWN_DATA_SIZE;
-    } else {
-        return value;
     }
 }
 
@@ -130,26 +257,6 @@ test "readElementDataSize" {
     std.debug.assert(127 == try readElementDataSize(readers[2]));
     std.debug.assert(UNKNOWN_DATA_SIZE == try readElementDataSize(readers[3]));
     std.debug.assert(16_383 == try readElementDataSize(readers[4]));
-}
-
-// The following typed read functions assume element ID was already read in the buffer, meaning
-// the buffer position is on the first byte of the element data size
-
-pub fn readSignedInteger(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
-    const size = try readElementDataSize(reader);
-    
-    if (size == 0) {
-        return default orelse 0;
-    } else if (size > 8) {
-        return error.InvalidElementSize;
-    } else {
-        var bytes: [8]u8 = .{0} ** 8;
-        try reader.readNoEof(bytes[0..size]);
-        const value = std.mem.bigToNative(i64, std.mem.bytesToValue(i64, &bytes)) >> @as(u6, @intCast((8 - size) * 8));
-
-        // std.debug.print("0b{b:0>64}, {d}\n", .{value, value});
-        return value;
-    }
 }
 
 test "Right-shift" {
@@ -193,23 +300,6 @@ test "readSignedInteger" {
     std.debug.assert(70 == try readSignedInteger(readers[6], 70));
 }
 
-pub fn readUnsignedInteger(reader: std.io.AnyReader, default: ?u64) anyerror!u64 {
-    const size = try readElementDataSize(reader);
-    
-    if (size == 0) {
-        return default orelse 0;
-    } else if (size > 8) {
-        return error.InvalidElementSize;
-    } else {
-        var bytes: [8]u8 = .{0} ** 8;
-        try reader.readNoEof(bytes[0..size]);
-        const value = std.mem.bigToNative(u64, std.mem.bytesToValue(u64, &bytes)) >> @as(u6, @intCast((8 - size) * 8));
-
-        // std.debug.print("0b{b:0>64}, {d}\n", .{value, value});
-        return value;
-    }
-}
-
 test "readUnsignedInteger" {
     const a: u64 = 0b1000_0010_1111_1110_1101_0100_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
     const b: u64 = 0b1000_0001_0111_1111_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
@@ -242,26 +332,6 @@ test "readUnsignedInteger" {
     std.debug.assert(0 == try readUnsignedInteger(readers[6], null));
     fixedBufferStreams[6].pos = 0;
     std.debug.assert(70 == try readUnsignedInteger(readers[6], 70));
-}
-
-pub fn readFloat(reader: std.io.AnyReader, default: ?f64) anyerror!f64 {
-    const size = try readElementDataSize(reader);
-    
-    if (size == 0) {
-        return default orelse 0;
-    } else if (size == 4) {
-        var bytes: [4]u8 = .{0} ** 4;
-        try reader.readNoEof(&bytes);
-        const value = @as(f32, @bitCast(std.mem.bigToNative(u32, std.mem.bytesToValue(u32, &bytes))));
-        return @as(f64, value);
-    } else if (size == 8) {
-        var bytes: [8]u8 = .{0} ** 8;
-        try reader.readNoEof(&bytes);
-        const value = @as(f64, @bitCast(std.mem.bigToNative(u64, std.mem.bytesToValue(u64, &bytes))));
-        return value;
-    } else {
-        return error.InvalidElementSize;
-    }
 }
 
 test "readFloat" {
