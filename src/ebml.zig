@@ -391,6 +391,19 @@ pub fn readDate(reader: std.io.AnyReader, default: ?i64) anyerror!i64 {
     }
 }
 
+pub fn readMaster(document: *EbmlDocument, id: ElementId) anyerror!void {
+    const size = try readElementDataSize(document.reader);
+    _ = size;
+
+    if (document.path_len == MAX_NESTING_DEPTH - 1) {
+        return error.NestingTooDeep;
+    }
+
+    document.path[document.path_len] == .{ .id = id, .end_pos = undefined, }; // TODO How to determine end pos?
+    document.path_len += 1;
+    // TODO
+}
+
 // ================
 // Tests
 
