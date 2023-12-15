@@ -1,6 +1,6 @@
 const std = @import("std");
 
-pub const PutBackError = error {
+pub const PutBackError = error{
     OutOfMemory,
 };
 
@@ -30,7 +30,8 @@ pub fn ReadWriteStream(
         context: Context,
 
         read_buf: [config.read_buffer_size]u8 = undefined,
-        read_buf_start: usize = 0, read_buf_end: usize = 0,
+        read_buf_start: usize = 0,
+        read_buf_end: usize = 0,
         read_buf_peek_end: usize = 0,
 
         write_buf: [config.write_buffer_size]u8 = undefined,
@@ -72,17 +73,15 @@ pub fn ReadWriteStream(
         // == Operations ==
         // === Read ===
         // When reading:
+        // - If write buffer is not empty (write buffer cannot be discontinous):
+        //     - Flush the write buffer.
+        //
         // - Return as many bytes from the read byte buffer as exist
         // - If the read buffer is used up:
-        //     - If the write buffer is not empty, flush it.
-        //     - read from underlying stream, fill read buffer
+        //     - Read from underlying stream, fill read buffer
         // - Repeat until dest has been filled, there has been an error or the underlying stream returns 0 bytes (EOF)
         //
         // === Write ===
-        // If read_buf_end - read_buf_start < write_buf_offset - write_buf_end:
-        //    // User has done write -> read / seek, and now wants to write again; write buffer cannot be discontinous
-        //    Flush the write buffer.
-        //
         // If there is not enough space in the write buffer:
         //     Flush the write buffer.
         //     If the number of bytes to write is greater than the write buffer size,
@@ -96,19 +95,40 @@ pub fn ReadWriteStream(
         //     Increment read_buf_start by number of bytes written (clamped to read_buf_end).
         //
         // === Flush write buffer ===
-        // - seek backwards by write_buf_offset (skip if write_buf_offset == 0)
+        // - Seek backwards by write_buf_offset (skip if write_buf_offset == 0)
         // - writeAll the write buffer
-        //     - in case of error, seek back forwards to the previous position (skip if write_buf_offset == 0)
+        //     - In case of error, seek back forwards to the previous position (skip if write_buf_offset == 0)
         //         - If that fails, stream will be in an invalid state (return seek error)
-        // - seek back forwards by (write_buf_offset - write_buf_end) (skip if value is <=0)
+        // - Seek back forwards by (write_buf_offset - write_buf_end) (skip if value is <=0)
         //     - If that fails, stream will be in an invalid state (return seek error)
-        // - set write_buf_offset = 0, set write_buf_end = 0
+        // - Set write_buf_offset = 0, set write_buf_end = 0
         //
         // === Put back ===
-        // // TODO
+        // Flush write buffer if it is not empty.
+        //     Rationale:
+        //         If the write buffer is non-empty, the last action cannot have been a read.
+        //         Is putting back bytes that were just written a reasonable action to support?
+        //         When flushing, this will just work by default.
+        //
+        // If the number of bytes to put back is <=read_buf_start:
+        //     Decrement read_buf_start by number of bytes to put back and return.
+        //
+        // Otherwise, discard read buffer. Place the supplied bytes anywhere in the read buffer and
+        // set read_buf_start and read_buf_end accordingly.
+        //
+        // They should probably just be put at the start, however, that will prevent further calls to putBack
+        // from reusing the same buffer. However, the most likely pattern is probably: read -> putBack -> read etc.
+        // If putting it at the start:
+        //     Set read_buf_start = 0, read_buf_end = number of bytes
         //
         // === Seek by ===
-        // // TODO
+        // - If write buffer is not empty (write buffer cannot be discontinous):
+        //     - Flush the write buffer.
+        //
+        // - If read_buf_start + amt < read_buf_end or read_buf_start + amt >= 0
+        //     - Increment read_buf_start by amt
+        //
+        // - Otherwise, same implementation as seekTo().
         //
         // === Seek to ===
         // Flush write buffer if it is non-empty.
@@ -229,7 +249,7 @@ pub fn ReadWriteStream(
         }
 
         pub fn putBackByte(self: *Self, byte: u8) PutBackError!void {
-            return self.putBack(&[_]u8 { byte });
+            return self.putBack(&[_]u8{byte});
         }
     };
 }
@@ -237,14 +257,11 @@ pub fn ReadWriteStream(
 pub fn FileReadWriteStream(comptime config: ReadWriteStreamConfig) type {
     const File = std.fs.File;
 
-    return ReadWriteStream(File,
-        File.ReadError, File.WriteError, File.SeekError, File.GetSeekPosError,
-        File.read, File.write, File.seekTo, File.seekBy, File.getEndPos, File.getPos,
-        config);
+    return ReadWriteStream(File, File.ReadError, File.WriteError, File.SeekError, File.GetSeekPosError, File.read, File.write, File.seekTo, File.seekBy, File.getEndPos, File.getPos, config);
 }
 
 pub fn streamFromFile(file: std.fs.File) FileReadWriteStream(.{}) {
-    return FileReadWriteStream(.{}) {
+    return FileReadWriteStream(.{}){
         .context = file,
     };
 }
@@ -252,14 +269,11 @@ pub fn streamFromFile(file: std.fs.File) FileReadWriteStream(.{}) {
 pub fn FixedBufferReadWriteStream(comptime Buffer: type, comptime config: ReadWriteStreamConfig) type {
     const Fbs = std.io.FixedBufferStream(Buffer);
 
-    return ReadWriteStream(*Fbs,
-        Fbs.ReadError, Fbs.WriteError, Fbs.SeekError, Fbs.GetSeekPosError,
-        Fbs.read, Fbs.write, Fbs.seekTo, Fbs.seekBy, Fbs.getEndPos, Fbs.getPos,
-        config);
+    return ReadWriteStream(*Fbs, Fbs.ReadError, Fbs.WriteError, Fbs.SeekError, Fbs.GetSeekPosError, Fbs.read, Fbs.write, Fbs.seekTo, Fbs.seekBy, Fbs.getEndPos, Fbs.getPos, config);
 }
 
 pub fn streamFromFixedBuffer(comptime Buffer: type, stream: *std.io.FixedBufferStream(Buffer)) FixedBufferReadWriteStream(Buffer, .{}) {
-    return FixedBufferReadWriteStream(Buffer, .{}) {
+    return FixedBufferReadWriteStream(Buffer, .{}){
         .context = stream,
     };
 }
