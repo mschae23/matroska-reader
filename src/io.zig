@@ -39,39 +39,51 @@ pub fn ReadWriteStream(
         // ReadWriteStream buffer usage
         // ============================
         //
+        // == Diagram ==
+        // These diagrams show how the bytes of the read and write buffers are used. They assume a buffer size of 32 bytes for both kinds.
+        //
+        // === Legend ===
         // x: undefined data
         // w: write buffer
+        // |: separator for read / write buffer data (left of it is write buffer, right is read buffer)
         // p: peek data (part of read buffer)
         // r: read buffer
         // .: data yet to be read
         //
-        // xxxxxxxxxxxxxxxxxxxxxxxxxwwwwwwwpppprrrrrrrrrrrrrrrrrrrrrrrrrrrr...
-        // ^                        ^      ^   ^                           ^
-        // |                        |      |   |                           |
-        // |                        |      |   |                           read buffer end, underlying seek position
-        // |                        |      |   start of the read buffer part got by read(), not putBack()
-        // |                        |      user-facing seek position, start of read buffer
-        // |                        start of write buffer
-        // start of write buffer if it had maximum length
+        // === Example ===
+        // wwwwwwwxxxxxxxxxxxxxxxxxxxxxxxxx|pppprrrrrrrrrrrrrrrrrrrrrxxxxxxx...
+        // ^      ^                         ^   ^                    ^
+        // |      |                         |   |                    |
+        // |      |                         |   |                    read buffer end, underlying seek position
+        // |      |                         |   start of the read buffer part got by read(), not putBack()
+        // |      |                         user-facing seek position, start of read buffer
+        // |      write buffer end, treated as the first byte of the read buffer (as if wwwwwww|pppprrr... was continous)
+        // start of write buffer (write_buf_start, usually == 0)
+        //
+        // After reading 8 bytes:
+        // wwwwwwwxxxxxxxxxxxxxxxxxxxxxxxxx|rrrrrrrrrrrrrrrrrrrrrrrrrxxxxxxx...
+        //                                  ^       ^
+        //                                  |       |
+        //                                  |       user-facing seek position always remains at the start of the read buffer
+        //                                  This part of the read buffer is still accessible by seeking back up to 8 bytes
+        // The underlying seek position remained unchanged.
+        // If the user wants to write now, the write buffer *has* to be flushed.
         //
         // == Operations ==
         // === Read ===
         // When reading:
-        // - If the write buffer is not empty: (write buffer cannot be discontinous)
-        //     - seek backwards by write_buf_offset
-        //     - writeAll the write buffer
-        //         - in case of error, seek back forwards to the previous position
-        //         - If that fails, stream will be in an invalid state (return seek error)
-        //     - seek back forwards by (write_buf_offset - write_buf_end)
-        //         - If that fails, stream will be in an invalid state (return seek error)
-        //     - set write_buf_offset = 0, set write_buf_end = 0
         // - Return as many bytes from the read byte buffer as exist
         // - If the read buffer is used up:
+        //     - If the write buffer is not empty, flush it.
         //     - read from underlying stream, fill read buffer
         // - Repeat until dest has been filled, there has been an error or the underlying stream returns 0 bytes (EOF)
         //
         // === Write ===
-        // If there is not enough space:
+        // If read_buf_end - read_buf_start < write_buf_offset - write_buf_end:
+        //    // User has done write -> read / seek, and now wants to write again; write buffer cannot be discontinous
+        //    Flush the write buffer.
+        //
+        // If there is not enough space in the write buffer:
         //     Flush the write buffer.
         //     If the number of bytes to write is greater than the write buffer size,
         //       write directly to the underlying stream and return.
@@ -84,7 +96,24 @@ pub fn ReadWriteStream(
         //     Increment read_buf_start by number of bytes written (clamped to read_buf_end).
         //
         // === Flush write buffer ===
+        // - seek backwards by write_buf_offset (skip if write_buf_offset == 0)
+        // - writeAll the write buffer
+        //     - in case of error, seek back forwards to the previous position (skip if write_buf_offset == 0)
+        //         - If that fails, stream will be in an invalid state (return seek error)
+        // - seek back forwards by (write_buf_offset - write_buf_end) (skip if value is <=0)
+        //     - If that fails, stream will be in an invalid state (return seek error)
+        // - set write_buf_offset = 0, set write_buf_end = 0
+        //
+        // === Put back ===
         // // TODO
+        //
+        // === Seek by ===
+        // // TODO
+        //
+        // === Seek to ===
+        // Flush write buffer if it is non-empty.
+        // Use underlying seekTo().
+        // Set all *_buf_start, *_buf_end and write_buf_offset = 0, discarding them.
 
         const Self = @This();
         pub const ReadError = UnderlyingReadError;
@@ -92,19 +121,19 @@ pub fn ReadWriteStream(
         pub const SeekError = UnderlyingSeekError;
         pub const GetSeekPosError = UnderlyingGetSeekPosError;
 
-        inline fn underlyingRead(self: Self, buffer: []u8) ReadError!usize {
+        inline fn underlyingRead(self: Self, buffer: []u8) UnderlyingReadError!usize {
             return readFn(self.context, buffer);
         }
 
-        inline fn underlyingWrite(self: Self, bytes: []const u8) WriteError!usize {
+        inline fn underlyingWrite(self: Self, bytes: []const u8) UnderlyingWriteError!usize {
             return writeFn(self.context, bytes);
         }
 
-        inline fn underlyingSeekTo(self: Self, pos: u64) SeekError!void {
+        inline fn underlyingSeekTo(self: Self, pos: u64) UnderlyingSeekError!void {
             return seekToFn(self.context, pos);
         }
 
-        inline fn underlyingSeekBy(self: Self, amt: i64) SeekError!void {
+        inline fn underlyingSeekBy(self: Self, amt: i64) UnderlyingSeekError!void {
             return seekByFn(self.context, amt);
         }
 
