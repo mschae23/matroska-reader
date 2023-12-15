@@ -1,40 +1,134 @@
+//! The IO module provides the [`ReadWriteStream`] struct for buffered reading from and writing to a byte stream.
+//!
+//! [`ReadWriteStream`]: ReadWriteStream
+
 const std = @import("std");
 
-pub const PutBackError = error{
+/// Error that can occur in [`putBack`].
+///
+/// [`putBack`]: ReadWriteStream.putBack
+pub const PutBackError = error {
     OutOfMemory,
 };
 
+
+/// Compile-time configuration of [`ReadWriteStream`]. It allows customizing the size of the read and
+/// write buffers used.
+///
+/// [`ReadWriteStream`]: ReadWriteStream
 pub const ReadWriteStreamConfig = struct {
     read_buffer_size: usize = 4096,
     write_buffer_size: usize = 4096,
 };
 
+/// `ReadWriteStream` wraps a byte stream that is readable and optionally writable or seekable.
+/// It provides buffering for both reading and writing, as well as supporting peeking (using [`putBack`]).
+///
+/// Instances for [`File`s] or [`FixedBufferStream`s] can be created using [`streamFromFile`] and
+/// [`streamFromFixedBuffer`], respectively.
+///
+/// [`putBack`]: ReadWriteStream.putBack
+/// [`File`s]: std.fs.File
+/// [`FixedBufferStream`s]: std.io.FixedBufferStream
+/// [`streamFromFile`]: streamFromFile
+/// [`streamFromFixedBuffer`]: streamFromFixedBuffer
+///
 pub fn ReadWriteStream(
+    /// The type of the context value passed to the underlying functions.
     comptime Context: type,
+    /// The type of errors returned by the underlying read function.
     comptime UnderlyingReadError: type,
+    /// The type of errors returned by the underlying write function.
     comptime UnderlyingWriteError: type,
+    /// The type of errors returned by the underlying seek function.
     comptime UnderlyingSeekError: type,
+    /// The type of errors returned by the underlying `getSeekPos` function.
     comptime UnderlyingGetSeekPosError: type,
-    /// Returns the number of bytes read. It may be less than buffer.len.
-    /// If the number of bytes read is 0, it means end of stream.
+    /// Calling this function is **not** part of the public API.
+    ///
+    /// Returns the number of bytes read. It may be less than `buffer.len`.
+    /// If the number of bytes read is `0`, it means end of stream.
     /// End of stream is not an error condition.
     comptime readFn: fn (context: Context, buffer: []u8) UnderlyingReadError!usize,
+    /// Calling this function is **not** part of the public API.
     comptime writeFn: fn (context: Context, bytes: []const u8) UnderlyingWriteError!usize,
+    /// Calling this function is **not** part of the public API.
     comptime seekToFn: fn (context: Context, pos: u64) UnderlyingSeekError!void,
+    /// Calling this function is **not** part of the public API.
     comptime seekByFn: fn (context: Context, pos: i64) UnderlyingSeekError!void,
+    /// Calling this function is **not** part of the public API.
     comptime getPosFn: fn (context: Context) UnderlyingGetSeekPosError!u64,
+    /// Calling this function is **not** part of the public API.
     comptime getEndPosFn: fn (context: Context) UnderlyingGetSeekPosError!u64,
+    /// The compile-time configuration of this `ReadWriteStream`. Allows configuring the
+    /// sizes of the read and write buffer, respectively.
     comptime config: ReadWriteStreamConfig,
 ) type {
     return struct {
+        /// This is **not** part of the public API.
+        ///
+        /// `context` is a value passed to the underlying read, write, and seek functions.
         context: Context,
 
-        read_buf: [config.read_buffer_size]u8 = undefined,
-        read_buf_start: usize = 0,
-        read_buf_end: usize = 0,
-        read_buf_peek_end: usize = 0,
+        /// This is **not** part of the public API.
+        ///
+        /// If the stream is in an invalid state (usually due to a write buffer flush failing
+        /// after some data has already been written), this state is recorded here to have
+        /// subsequent calls to other functions return an error.
+        /// It is cleared by [`seekTo`].
+        ///
+        /// [`seekTo`]: seekTo
+        unrecoverable: bool = false,
 
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// The memory of the read buffer. Only `read_buf[0..read_buf_end]`
+        /// contains valid values, although usually only `read_buf[read_buf_start..read_buf_end]`
+        /// is used, as [`read_buf_start`] is the current user-facing position, i. e. it is the
+        /// index of the next value to be delivered by [`read`].
+        ///
+        /// [`read_buf_start`]: ReadWriteStream.read_buf_start
+        /// [`read`]: ReadWriteStream.read
+        read_buf: [config.read_buffer_size]u8 = undefined,
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// Represents the user-facing seek position relative to index `0` of the read buffer.
+        /// `read_buf[read_buf_start..read_buf_end]` is the slice that will be returned by
+        /// the next call to [`read`].
+        ///
+        /// Must be less than or equal to [`read_buf_end`]. If they are equal, they should both
+        /// be `0`.
+        ///
+        /// [`read`]: ReadWriteStream.read
+        /// [`read_buf_end`]: ReadWriteStream.read_buf_end
+        read_buf_start: usize = 0,
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// Stores the index of the end of the read buffer (exclusive). Values in the read buffer
+        /// beyond this index are considered uninitialized memory.
+        read_buf_end: usize = 0,
+
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// The memory of the write buffer. Only `write_buf[0..write_buf_end]` contains valid values,
+        /// although under normal circumstances, only `write_buf[write_buf_start..write_buf_end]` is used, as
+        /// [`write_buf_start`] is only set to a non-zero value when a write buffer flush has failed
+        /// part-way through for error recovery.
+        ///
+        /// [`write_buf_start`]: ReadWriteStream.write_buf_start
         write_buf: [config.write_buffer_size]u8 = undefined,
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// Stores the index of the start of the write buffer. This will usually be `0`. Values before
+        /// this index are considered to have already been written to the underlying stream.
+        write_buf_start: usize = 0,
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// Stores the index of the end of the write buffer. As long as [`write`] keeps being called,
+        /// this index will continually increase until the buffer has been filled, at which point
+        /// `write_buf[write_buf_start..write_buf_end]` will be flushed.
+        ///
+        /// [`write`]: ReadWriteStream.write
         write_buf_end: usize = 0,
 
         // ReadWriteStream buffer usage
@@ -136,9 +230,10 @@ pub fn ReadWriteStream(
         // Set all *_buf_start, *_buf_end and write_buf_offset = 0, discarding them.
 
         const Self = @This();
-        pub const ReadError = UnderlyingReadError;
-        pub const WriteError = UnderlyingWriteError;
-        pub const SeekError = UnderlyingSeekError;
+        pub const WriteFlushError = UnderlyingWriteError || UnderlyingSeekError;
+        pub const WriteError = WriteFlushError;
+        pub const SeekError = UnderlyingSeekError || WriteFlushError;
+        pub const ReadError = UnderlyingReadError || WriteFlushError;
         pub const GetSeekPosError = UnderlyingGetSeekPosError;
 
         inline fn underlyingRead(self: Self, buffer: []u8) UnderlyingReadError!usize {

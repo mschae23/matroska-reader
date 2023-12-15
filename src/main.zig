@@ -1,6 +1,7 @@
 const std = @import("std");
 const zigargs = @import("zigargs");
 
+pub const io = @import("./io.zig");
 pub const ebml = @import("./ebml.zig");
 
 pub fn main() !u8 {

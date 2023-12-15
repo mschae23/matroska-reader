@@ -38,4 +38,18 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_unit_tests.step);
+
+    const install_docs = b.addInstallDirectory(.{
+        // running exe.getEmittedDocs() is what actually triggers generation
+        // of the docs
+        .source_dir = exe.getEmittedDocs(),
+        .install_dir = .prefix,
+        .install_subdir = "docs",
+    });
+
+    // This creates a step that doesn't really do anything besides showing up in the output of `zig build -l` or
+    // `zig build --help`...
+    const docs_step = b.step("docs", "Copy documentation artifacts to prefix path");
+    // ... but we depend on the previous step that actually installs our docs
+    docs_step.dependOn(&install_docs.step);
 }
