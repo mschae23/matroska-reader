@@ -49,8 +49,16 @@ pub fn ReadWriteStream(
     /// Returns the number of bytes read. It may be less than `buffer.len`.
     /// If the number of bytes read is `0`, it means end of stream.
     /// End of stream is not an error condition.
+    ///
+    /// If this returns an error, it must not have changed the seek position of the underlying stream.
     comptime readFn: fn (context: Context, buffer: []u8) UnderlyingReadError!usize,
     /// Calling this function is **not** part of the public API.
+    ///
+    /// Returns the number of bytes written. it may be less than `buffer.len`.
+    /// If the number of bytes written is `0`, it means the stream is not likely to accept more data.
+    /// End of stream is not an error condition.
+    ///
+    /// If this returns an error, it must not have changed the seek position of the underlying stream.
     comptime writeFn: fn (context: Context, bytes: []const u8) UnderlyingWriteError!usize,
     /// Calling this function is **not** part of the public API.
     comptime seekToFn: fn (context: Context, pos: u64) UnderlyingSeekError!void,
@@ -230,16 +238,34 @@ pub fn ReadWriteStream(
         // Set all *_buf_start, *_buf_end and write_buf_offset = 0, discarding them.
 
         const Self = @This();
+
+        /// The type of errors that can occur while flushing the write buffer.
         pub const WriteFlushError = UnderlyingWriteError || UnderlyingSeekError;
+        /// The type of errors that can occur during writing.
         pub const WriteError = WriteFlushError;
+        /// The type of errors that can occur during seeking.
         pub const SeekError = UnderlyingSeekError || WriteFlushError;
+        /// The type of errors that can occur during reading.
         pub const ReadError = UnderlyingReadError || WriteFlushError;
+        /// The type of errors that can occur when calling [`getSeekPos`].
+        ///
+        /// [`getSeekPos`]: getSeekPos
         pub const GetSeekPosError = UnderlyingGetSeekPosError;
 
+        /// Returns the number of bytes read. It may be less than `buffer.len`.
+        /// If the number of bytes read is `0`, it means end of stream.
+        /// End of stream is not an error condition.
+        ///
+        /// If this returns an error, it must not have changed the seek position of the underlying stream.
         inline fn underlyingRead(self: Self, buffer: []u8) UnderlyingReadError!usize {
             return readFn(self.context, buffer);
         }
 
+        /// Returns the number of bytes written. it may be less than `buffer.len`.
+        /// If the number of bytes written is `0`, it means the stream is not likely to accept more data.
+        /// End of stream is not an error condition.
+        ///
+        /// If this returns an error, it must not have changed the seek position of the underlying stream.
         inline fn underlyingWrite(self: Self, bytes: []const u8) UnderlyingWriteError!usize {
             return writeFn(self.context, bytes);
         }
@@ -289,7 +315,7 @@ pub fn ReadWriteStream(
             return dest.len;
         }
 
-        pub fn flush_write(self: *Self) WriteError!void {
+        pub fn flush_write(self: *Self) WriteFlushError!void {
             // Adapted from std.io.BufferedWriter.flush
             var index: usize = 0;
 
@@ -320,11 +346,17 @@ pub fn ReadWriteStream(
         }
 
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
-            _ = self;
-            _ = pos;
+            if (!self.isWriteBufferEmpty()) {
+                try self.flush_write();
+            }
 
-            // TODO
-            unreachable;
+            // Discard all buffers
+            self.read_buf_end = 0;
+            self.read_buf_start = 0;
+            self.write_buf_end = 0;
+            self.read_buf_start = 0;
+
+            return self.underlyingSeekTo(pos);
         }
 
         pub fn seekBy(self: *Self, amt: i64) SeekError!void {
@@ -345,6 +377,10 @@ pub fn ReadWriteStream(
 
         pub fn putBackByte(self: *Self, byte: u8) PutBackError!void {
             return self.putBack(&[_]u8{byte});
+        }
+
+        inline fn isWriteBufferEmpty(self: *const Self) bool {
+            return self.write_buf_end == self.write_buf_start; // end - start == 0
         }
     };
 }
@@ -371,4 +407,45 @@ pub fn streamFromFixedBuffer(comptime Buffer: type, stream: *std.io.FixedBufferS
     return FixedBufferReadWriteStream(Buffer, .{}){
         .context = stream,
     };
+}
+
+test "ReadWriteStream on a fixed buffer" {
+    var buffer: [64]u8 = .{undefined} ** 64;
+
+    for (0.., &buffer) |i, *value| {
+        value.* = @intCast(i);
+    }
+
+    var fixed_buf = std.io.fixedBufferStream(&buffer);
+    var stream = streamFromFixedBuffer([]u8, &fixed_buf);
+
+    var temp: [4]u8 = .{0xFF} ** 4;
+
+    std.debug.assert(4 == try stream.read(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{0, 1, 2, 3}, &temp));
+
+    temp = .{9, 8, 7, 6};
+    std.debug.assert(4 == try stream.write(&temp));
+    try stream.seekBy(-4);
+
+    std.debug.assert(4 == try stream.read(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{9, 8, 7, 6}, &temp));
+
+    std.debug.assert(4 == try stream.read(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{8, 9, 10, 11}, &temp));
+
+    try stream.putBack(temp[2..]);
+
+    std.debug.assert(4 == try stream.read(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{10, 11, 12, 13}, &temp));
+
+    try stream.seekBy(27);
+
+    std.debug.assert(3 == try stream.read(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{61, 62, 63}, &temp));
+
+    std.debug.assert(0 == try stream.read(&temp));
+    // If the backing stream were a file, this write() should extend it and succeed with 3 bytes
+    std.debug.assert(0 == try stream.write(&temp));
+    std.debug.assert(std.mem.eql(u8, &.{61, 62, 63}, &temp));
 }
