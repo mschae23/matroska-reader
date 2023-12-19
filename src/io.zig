@@ -4,12 +4,20 @@
 
 const std = @import("std");
 
+/// Error that can occur in any operation when the [`ReadWriteStream`] is an invalid state.
+/// It can only be reset by seeking to a known position.
+///
+/// [`ReadWriteStream`]: ReadWriteStream
+pub const UnrecoverableError = error {
+    Unrecoverable,
+};
+
 /// Error that can occur in [`putBack`].
 ///
 /// [`putBack`]: ReadWriteStream.putBack
 pub const PutBackError = error {
     OutOfMemory,
-};
+} || UnrecoverableError;
 
 
 /// Compile-time configuration of [`ReadWriteStream`]. It allows customizing the size of the read and
@@ -78,8 +86,6 @@ pub fn ReadWriteStream(
         /// `context` is a value passed to the underlying read, write, and seek functions.
         context: Context,
 
-        /// This is **not** part of the public API.
-        ///
         /// If the stream is in an invalid state (usually due to a write buffer flush failing
         /// after some data has already been written), this state is recorded here to have
         /// subsequent calls to other functions return an error.
@@ -138,6 +144,56 @@ pub fn ReadWriteStream(
         ///
         /// [`write`]: ReadWriteStream.write
         write_buf_end: usize = 0,
+        write_buf_offset: usize = 0,
+
+        const Self = @This();
+
+        /// The type of errors that can occur while flushing the write buffer.
+        pub const WriteFlushError = UnderlyingWriteError || UnderlyingSeekError || UnrecoverableError;
+        /// The type of errors that can occur during writing.
+        pub const WriteError = WriteFlushError;
+        /// The type of errors that can occur during seeking.
+        pub const SeekError = UnderlyingSeekError || WriteFlushError;
+        /// The type of errors that can occur during reading.
+        pub const ReadError = UnderlyingReadError || WriteFlushError;
+        /// The type of errors that can occur when calling [`getSeekPos`].
+        ///
+        /// [`getSeekPos`]: getSeekPos
+        pub const GetSeekPosError = UnderlyingGetSeekPosError;
+
+        /// Returns the number of bytes read. It may be less than `buffer.len`.
+        /// If the number of bytes read is `0`, it means end of stream.
+        /// End of stream is not an error condition.
+        ///
+        /// If this returns an error, it must not have changed the seek position of the underlying stream.
+        inline fn underlyingRead(self: Self, buffer: []u8) UnderlyingReadError!usize {
+            return readFn(self.context, buffer);
+        }
+
+        /// Returns the number of bytes written. it may be less than `buffer.len`.
+        /// If the number of bytes written is `0`, it means the stream is not likely to accept more data.
+        /// End of stream is not an error condition.
+        ///
+        /// If this returns an error, it must not have changed the seek position of the underlying stream.
+        inline fn underlyingWrite(self: Self, bytes: []const u8) UnderlyingWriteError!usize {
+            return writeFn(self.context, bytes);
+        }
+
+        inline fn underlyingSeekTo(self: Self, pos: u64) UnderlyingSeekError!void {
+            return seekToFn(self.context, pos);
+        }
+
+        inline fn underlyingSeekBy(self: Self, amt: i64) UnderlyingSeekError!void {
+            return seekByFn(self.context, amt);
+        }
+
+        pub inline fn getEndPos(self: Self) GetSeekPosError!u64 {
+            return getEndPosFn(self.context);
+        }
+
+        pub inline fn getPos(self: Self) GetSeekPosError!u64 {
+            return getPosFn(self.context);
+        }
 
         // ReadWriteStream buffer usage
         // ============================
@@ -194,6 +250,7 @@ pub fn ReadWriteStream(
         //         Set write_buf_offset = read_buf_end - read_buf_start
         //
         //     Append to the write buffer.
+        //     Increment write_buf_end by number of bytes written.
         //     Increment read_buf_start by number of bytes written (clamped to read_buf_end).
         //
         // === Flush write buffer ===
@@ -201,6 +258,7 @@ pub fn ReadWriteStream(
         // - writeAll the write buffer
         //     - In case of error, seek back forwards to the previous position (skip if write_buf_offset == 0)
         //         - If that fails, stream will be in an invalid state (return seek error)
+        // - overwrite the relevant part of the read buffer
         // - Seek back forwards by (write_buf_offset - write_buf_end) (skip if value is <=0)
         //     - If that fails, stream will be in an invalid state (return seek error)
         // - Set write_buf_offset = 0, set write_buf_end = 0
@@ -237,56 +295,19 @@ pub fn ReadWriteStream(
         // Use underlying seekTo().
         // Set all *_buf_start, *_buf_end and write_buf_offset = 0, discarding them.
 
-        const Self = @This();
-
-        /// The type of errors that can occur while flushing the write buffer.
-        pub const WriteFlushError = UnderlyingWriteError || UnderlyingSeekError;
-        /// The type of errors that can occur during writing.
-        pub const WriteError = WriteFlushError;
-        /// The type of errors that can occur during seeking.
-        pub const SeekError = UnderlyingSeekError || WriteFlushError;
-        /// The type of errors that can occur during reading.
-        pub const ReadError = UnderlyingReadError || WriteFlushError;
-        /// The type of errors that can occur when calling [`getSeekPos`].
-        ///
-        /// [`getSeekPos`]: getSeekPos
-        pub const GetSeekPosError = UnderlyingGetSeekPosError;
-
-        /// Returns the number of bytes read. It may be less than `buffer.len`.
-        /// If the number of bytes read is `0`, it means end of stream.
-        /// End of stream is not an error condition.
-        ///
-        /// If this returns an error, it must not have changed the seek position of the underlying stream.
-        inline fn underlyingRead(self: Self, buffer: []u8) UnderlyingReadError!usize {
-            return readFn(self.context, buffer);
-        }
-
-        /// Returns the number of bytes written. it may be less than `buffer.len`.
-        /// If the number of bytes written is `0`, it means the stream is not likely to accept more data.
-        /// End of stream is not an error condition.
-        ///
-        /// If this returns an error, it must not have changed the seek position of the underlying stream.
-        inline fn underlyingWrite(self: Self, bytes: []const u8) UnderlyingWriteError!usize {
-            return writeFn(self.context, bytes);
-        }
-
-        inline fn underlyingSeekTo(self: Self, pos: u64) UnderlyingSeekError!void {
-            return seekToFn(self.context, pos);
-        }
-
-        inline fn underlyingSeekBy(self: Self, amt: i64) UnderlyingSeekError!void {
-            return seekByFn(self.context, amt);
-        }
-
-        pub inline fn getEndPos(self: Self) GetSeekPosError!u64 {
-            return getEndPosFn(self.context);
-        }
-
-        pub inline fn getPos(self: Self) GetSeekPosError!u64 {
-            return getPosFn(self.context);
-        }
-
         pub fn read(self: *Self, dest: []u8) ReadError!usize {
+            if (self.unrecoverable) {
+                // per-branch cold
+                return error.Unrecoverable;
+            }
+
+            std.debug.print("Read {d} bytes\n", .{dest.len});
+
+            if (!self.isWriteBufferEmpty()) {
+                try self.flush_write();
+                // No need to worry about the write buffer now
+            }
+
             // Adapted from std.io.BufferedReader.read
             var dest_index: usize = 0;
 
@@ -315,20 +336,15 @@ pub fn ReadWriteStream(
             return dest.len;
         }
 
-        pub fn flush_write(self: *Self) WriteFlushError!void {
-            // Adapted from std.io.BufferedWriter.flush
-            var index: usize = 0;
-
-            while (index != self.write_buf_end) {
-                index += try self.write(self.write_buf[0..self.write_buf_end][index..]);
+        pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
+            if (self.unrecoverable) {
+                // per-branch cold
+                return error.Unrecoverable;
             }
 
-            self.write_buf_end = 0;
-        }
+            std.debug.print("Write {d} bytes\n", .{bytes.len});
 
-        pub fn write(self: *Self, bytes: []const u8) WriteError!usize {
             // Adapted from std.io.BufferedWriter.write
-
             if (self.write_buf_end + bytes.len > self.write_buf.len) {
                 try self.flush_write();
 
@@ -337,38 +353,132 @@ pub fn ReadWriteStream(
                 }
             }
 
+            if (self.isWriteBufferEmpty()) {
+                self.write_buf_offset = self.read_buf_end - self.read_buf_start;
+            }
+
             const new_end = self.write_buf_end + bytes.len;
 
             @memcpy(self.write_buf[self.write_buf_end..new_end], bytes);
             self.write_buf_end = new_end;
 
+            self.read_buf_start = @min(self.read_buf_start + bytes.len, self.read_buf.len);
+            self.read_buf_end = @max(self.read_buf_start, self.read_buf_end);
+
             return bytes.len;
         }
 
+        pub fn flush_write(self: *Self) WriteFlushError!void {
+            if (self.unrecoverable) {
+                // per-branch cold
+                return error.Unrecoverable;
+            }
+
+            std.debug.print("Flush write ({d}..{d} - {d})\n", .{self.write_buf_start, self.write_buf_end, self.write_buf_offset});
+
+            if (self.write_buf_offset != 0) {
+                try self.underlyingSeekBy(-@as(i64, @intCast(self.write_buf_offset)));
+            }
+
+            const end = self.write_buf_end - self.write_buf_start;
+
+            {
+                const len = @min(self.read_buf_start, end);
+                const write_start = self.write_buf_start + (end - len);
+
+                if (write_start < self.write_buf_end) {
+                    @memcpy(self.read_buf[(self.read_buf_end - self.write_buf_offset) .. self.read_buf_start], self.write_buf[write_start..self.write_buf_end]);
+                }
+            }
+
+            // Adapted from std.io.BufferedWriter.flush
+            var index: usize = 0;
+
+            while (index != end) {
+                index += self.underlyingWrite(self.write_buf[self.write_buf_start..self.write_buf_end][index..]) catch |err| {
+                    self.write_buf_start += index;
+                    self.write_buf_offset -= index;
+
+                    if (self.write_buf_offset != 0) {
+                        self.underlyingSeekBy(@intCast(self.write_buf_offset)) catch |seek_err| {
+                            self.unrecoverable = true;
+                            return seek_err;
+                        };
+                    }
+
+                    return err;
+                };
+            }
+
+            self.write_buf_end = 0;
+            self.write_buf_start = 0;
+            self.write_buf_offset = 0;
+        }
+
+        /// Discards the read and write buffers. Any data written so far that wasn't successfully flushed to
+        /// the underlying stream will be lost.
+        ///
+        /// This function also resets the `unrecoverable` flag. However, it makes no guarentees on the current seek position,
+        /// which may still be at any unknown point within the stream. It is recommended to use [`seekTo`] to seek to a known
+        /// position before continuing.
+        ///
+        /// [`seekTo`]: seekTo
+        pub fn discardBuffers(self: *Self) void {
+            std.debug.print("Discard buffers\n", .{});
+            self.read_buf_end = 0;
+            self.read_buf_start = 0;
+            self.write_buf_end = 0;
+            self.write_buf_start = 0;
+            self.write_buf_offset = 0;
+            self.unrecoverable = false;
+        }
+
+        /// Seeks to the given position in the stream.
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
+            std.debug.print("Seek to {d}\n", .{pos});
+
             if (!self.isWriteBufferEmpty()) {
                 try self.flush_write();
             }
 
-            // Discard all buffers
-            self.read_buf_end = 0;
-            self.read_buf_start = 0;
-            self.write_buf_end = 0;
-            self.read_buf_start = 0;
+            self.discardBuffers();
+            return self.underlyingSeekTo(pos);
+        }
 
+        /// Seeks to the given position in the stream, discarding the read and write buffers. Any data written so far that wasn't
+        /// successfully flushed to the underlying stream will be lost.
+        ///
+        /// This function also resets the `unrecoverable` flag, so it can be used to seek to a known position after an error to retry.
+        pub fn seekToDiscarding(self: *Self, pos: u64) UnderlyingSeekError!void {
+            std.debug.print("Seek to {d} (discarding)\n", .{pos});
+
+            self.discardBuffers();
             return self.underlyingSeekTo(pos);
         }
 
         pub fn seekBy(self: *Self, amt: i64) SeekError!void {
-            _ = self;
-            _ = amt;
+            std.debug.print("Seek by {d} bytes\n", .{amt});
 
-            // TODO
-            unreachable;
+            if (!self.isWriteBufferEmpty()) {
+                try self.flush_write();
+            }
+
+            if (@as(i64, @intCast(self.read_buf_start)) + amt < @as(i64, @intCast(self.read_buf_end)) and @as(i64, @intCast(self.read_buf_start)) + amt >= 0) {
+                std.debug.print("Reusing read buffer for seek\n", .{});
+                self.read_buf_start = @intCast(@as(i64, @intCast(self.read_buf_start)) + amt);
+            } else {
+                std.debug.print("Discarding buffers for seek\n", .{});
+                self.discardBuffers();
+                return self.underlyingSeekBy(amt);
+            }
         }
 
         pub fn putBack(self: *Self, bytes: []const u8) PutBackError!void {
-            _ = self;
+            if (self.unrecoverable) {
+                // per-branch cold
+                return error.Unrecoverable;
+            }
+
             _ = bytes;
 
             // TODO
@@ -380,6 +490,7 @@ pub fn ReadWriteStream(
         }
 
         inline fn isWriteBufferEmpty(self: *const Self) bool {
+            std.debug.print("Is write buffer empty ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
             return self.write_buf_end == self.write_buf_start; // end - start == 0
         }
     };
@@ -416,35 +527,53 @@ test "ReadWriteStream on a fixed buffer" {
         value.* = @intCast(i);
     }
 
+    std.debug.print("00. Setup\n", .{});
     var fixed_buf = std.io.fixedBufferStream(&buffer);
     var stream = streamFromFixedBuffer([]u8, &fixed_buf);
 
     var temp: [4]u8 = .{0xFF} ** 4;
 
+    std.debug.print("01. Read\n", .{});
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{0, 1, 2, 3}, &temp));
 
+    std.debug.print("02. Write\n", .{});
     temp = .{9, 8, 7, 6};
     std.debug.assert(4 == try stream.write(&temp));
+
+    // Buffered, so shouldn't be in the backing array yet
+    std.debug.assert(std.mem.eql(u8, &.{4, 5, 6, 7}, buffer[4..8]));
+
+    std.debug.print("03. Seek\n", .{});
     try stream.seekBy(-4);
 
+    std.debug.print("04. Read\n", .{});
     std.debug.assert(4 == try stream.read(&temp));
+    std.debug.print("{any}\n", .{temp});
     std.debug.assert(std.mem.eql(u8, &.{9, 8, 7, 6}, &temp));
+    std.debug.assert(std.mem.eql(u8, &.{9, 8, 7, 6}, buffer[4..8]));
 
+    std.debug.print("05. Read\n", .{});
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{8, 9, 10, 11}, &temp));
 
+    std.debug.print("06. Put back\n", .{});
     try stream.putBack(temp[2..]);
 
+    std.debug.print("07. Read\n", .{});
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{10, 11, 12, 13}, &temp));
 
+    std.debug.print("08. Seek by\n", .{});
     try stream.seekBy(27);
 
+    std.debug.print("09. Read\n", .{});
     std.debug.assert(3 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{61, 62, 63}, &temp));
 
+    std.debug.print("10. Read\n", .{});
     std.debug.assert(0 == try stream.read(&temp));
+    std.debug.print("11. Write\n", .{});
     // If the backing stream were a file, this write() should extend it and succeed with 3 bytes
     std.debug.assert(0 == try stream.write(&temp));
     std.debug.assert(std.mem.eql(u8, &.{61, 62, 63}, &temp));
