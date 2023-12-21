@@ -139,6 +139,26 @@ pub fn ReadWriteStream(
         ///
         /// [`write`]: ReadWriteStream.write
         write_buf_end: usize = 0,
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// // TODO Use this value entirely different.
+        ///
+        /// Currently, read_buf_end - write_buf_offset is the index in the read buffer where the written data starts when flushing,
+        /// as well as how many bytes to seek back when flushing.
+        ///
+        /// However, since the length of the written data is known (write_buf_end - write_buf_start), as well as the end index in the
+        /// read buffer (always read_buf_start when read buffer is used, or N/A when it is not), this value is redundant.
+        /// // TODO What if read buffer is filled 60..64, and 8 bytes are written? Read buffer will be 64..64, and read_buf_start will
+        ///         no longer be the end index of written data in the read buffer. write() currently sets read buffer to 0..0 in that case,
+        ///         which may be enough to distinguish this case from the write buffer *just* filling the read buffer.
+        ///         The distinction is important because seekBy() can simply move read_buf_start backwards again, which would mess with the
+        ///         user-facing seek position in the former case.
+        ///
+        /// Instead, the value should be something different that is useful in `getPos`, which currently cannot provide an accurate
+        /// user-facing seek position when the read buffer is unused, but there is unwritten data.
+        ///
+        /// Maybe current seek position relative to read_buf_start? Would be `0` if read buffer was used, but could be used in `getPos`
+        /// when it isn't.
         write_buf_offset: usize = 0,
 
         const Self = @This();
@@ -494,6 +514,7 @@ pub fn ReadWriteStream(
         }
 
         pub inline fn getPos(self: *const Self) GetSeekPosError!u64 {
+            std.debug.print("Get position: underlying: {d}, read: {d}..{d}, write offset: {d}, write: {d}..{d}\n", .{try self.underlyingGetPos(), self.read_buf_start, self.read_buf_end, self.write_buf_offset, self.write_buf_start, self.write_buf_end});
             return try self.underlyingGetPos() + self.read_buf_start - self.read_buf_end;
         }
 
@@ -659,4 +680,51 @@ test "ReadWriteStream on a fixed buffer - mixed" {
     std.debug.assert(64 == try stream.getPos());
     std.debug.assert(error.NoSpaceLeft == stream.flush_write());
     std.debug.assert(64 == try stream.getPos());
+}
+
+test "ReadWriteStream on a fixed buffer - read only" {
+    var buffer: [64]u8 = .{undefined} ** 64;
+
+    for (0.., &buffer) |i, *value| {
+        value.* = @intCast(i);
+    }
+
+    var fixed_buf = std.io.fixedBufferStream(&buffer);
+    var stream = streamFromFixedBuffer([]u8, &fixed_buf);
+
+    var temp: [1]u8 = .{0xFF};
+
+    for (0..buffer.len) |i| {
+        std.debug.assert(1 == try stream.read(&temp));
+        std.debug.assert(i == temp[0]);
+        std.debug.assert(i + 1 == try stream.getPos());
+    }
+
+    std.debug.assert(0 == try stream.read(&temp));
+    std.debug.assert(buffer.len - 1 == temp[0]);
+    std.debug.assert(buffer.len == try stream.getPos());
+}
+
+test "ReadWriteStream on a fixed buffer - write only" {
+    var buffer: [64]u8 = .{0xFF} ** 64;
+
+    var fixed_buf = std.io.fixedBufferStream(&buffer);
+    var stream = streamFromFixedBuffer([]u8, &fixed_buf);
+
+    var temp: [1]u8 = .{0xFF};
+
+    for (0..buffer.len) |i| {
+        temp[0] = @intCast(i);
+        std.debug.assert(1 == try stream.write(&temp));
+        std.debug.assert(i + 1 == try stream.getPos());
+    }
+
+    temp[0] = buffer.len;
+    std.debug.assert(1 == try stream.write(&temp));
+    std.debug.assert(buffer.len - 1 == temp[0]);
+    std.debug.assert(buffer.len == try stream.getPos());
+
+    for (0..buffer.len) |i| {
+        std.debug.assert(i == buffer[i]);
+    }
 }
