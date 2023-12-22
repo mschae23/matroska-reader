@@ -66,7 +66,7 @@ pub fn ReadWriteStream(
     /// Calling this function is **not** part of the public API.
     comptime seekToFn: fn (context: Context, pos: u64) UnderlyingSeekError!void,
     /// Calling this function is **not** part of the public API.
-    comptime seekByFn: fn (context: Context, pos: i64) UnderlyingSeekError!void,
+    comptime seekByFn: fn (context: Context, amt: i64) UnderlyingSeekError!void,
     /// Calling this function is **not** part of the public API.
     comptime getPosFn: fn (context: Context) UnderlyingGetSeekPosError!u64,
     /// Calling this function is **not** part of the public API.
@@ -307,7 +307,7 @@ pub fn ReadWriteStream(
             std.debug.print("Read {d} bytes\n", .{dest.len});
 
             if (!self.isWriteBufferEmpty()) {
-                try self.flush_write();
+                try self.flushWrite();
                 // No need to worry about the write buffer now
             }
 
@@ -348,7 +348,7 @@ pub fn ReadWriteStream(
             std.debug.print("Write {d} bytes\n", .{bytes.len});
 
             if (self.write_buf_end + bytes.len > self.write_buf.len) {
-                try self.flush_write();
+                try self.flushWrite();
 
                 if (bytes.len > self.write_buf.len) {
                     return self.underlyingWrite(bytes);
@@ -372,7 +372,7 @@ pub fn ReadWriteStream(
             return bytes.len;
         }
 
-        pub fn flush_write(self: *Self) WriteFlushError!void {
+        pub fn flushWrite(self: *Self) WriteFlushError!void {
             if (self.unrecoverable) {
                 // per-branch cold
                 return error.Unrecoverable;
@@ -456,7 +456,7 @@ pub fn ReadWriteStream(
             std.debug.print("Seek to {d}\n", .{pos});
 
             if (!self.isWriteBufferEmpty()) {
-                try self.flush_write();
+                try self.flushWrite();
             }
 
             self.discardBuffers();
@@ -483,7 +483,7 @@ pub fn ReadWriteStream(
             std.debug.print("Seek by {d} bytes\n", .{amt});
 
             if (!self.isWriteBufferEmpty()) {
-                try self.flush_write();
+                try self.flushWrite();
             }
 
             if (@as(i64, @intCast(self.read_buf_start)) + amt < @as(i64, @intCast(self.read_buf_end)) and @as(i64, @intCast(self.read_buf_start)) + amt >= 0) {
@@ -497,12 +497,12 @@ pub fn ReadWriteStream(
             }
         }
 
-        pub inline fn getPos(self: *const Self) GetSeekPosError!u64 {
+        pub fn getPos(self: *const Self) GetSeekPosError!u64 {
             std.debug.print("Get position: underlying: {d}, read: {d}..{d}, write offset: {d}, write: {d}..{d}\n", .{try self.underlyingGetPos(), self.read_buf_start, self.read_buf_end, self.write_buf_offset, self.write_buf_start, self.write_buf_end});
             return try self.underlyingGetPos() + self.read_buf_start - self.read_buf_end + self.write_buf_offset;
         }
 
-        /// Puts back `bytes` into the stream so they will be read again.
+        /// Puts back `bytes` into the stream, so they will be read again.
         ///
         /// This function simply assumes that `bytes` contains the exact bytes that were read or written directly before this call.
         /// That is, if `bytes` was modified after reading, it is unspecified whether a call to `read` following this function will return
@@ -516,7 +516,7 @@ pub fn ReadWriteStream(
             std.debug.print("Put back {d} bytes\n", .{bytes.len});
 
             if (!self.isWriteBufferEmpty()) {
-                try self.flush_write();
+                try self.flushWrite();
             }
 
             if (bytes.len <= self.read_buf_start) {
@@ -535,13 +535,84 @@ pub fn ReadWriteStream(
             }
         }
 
-        pub fn putBackByte(self: *Self, byte: u8) PutBackError!void {
+        /// Puts back a single byte `byte` into the stream, so it will be read again.
+        ///
+        /// This function simply assumes that `byte` is the exact byte that was read or written directly before this call.
+        /// That is, if `byte` was modified after reading, it is unspecified whether a call to `read` following this function will return
+        /// the modified data or the data that is actually in the underlying stream.
+        pub inline fn putBackByte(self: *Self, byte: u8) PutBackError!void {
             return self.putBack(&[_]u8{byte});
         }
 
         inline fn isWriteBufferEmpty(self: *const Self) bool {
             std.debug.print("Is write buffer empty ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
             return self.write_buf_end == self.write_buf_start; // end - start == 0
+        }
+
+        pub inline fn any(self: *Self) AnyReadWriteStream(config) {
+            return AnyReadWriteStream(config) {
+                .context = @ptrCast(self),
+                .readFn = typeErasedReadFn,
+                .writeFn = typeErasedWriteFn,
+                .flushWriteFn = typeErasedFlushWriteFn,
+                .discardBuffersFn = typeErasedDiscardBuffersFn,
+                .seekToFn = typeErasedSeekToFn,
+                .seekToDiscardingFn = typeErasedSeekToDiscardingFn,
+                .seekByFn = typeErasedGetPosFn,
+                .putBackFn = typeErasedPutBackFn,
+                .getPosFn = typeErasedGetPosFn,
+                .getEndPosFn = typeErasedGetEndPosFn,
+            };
+        }
+
+        fn typeErasedReadFn(context: *anyopaque, buffer: []u8) anyerror!usize {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return read(ptr, buffer);
+        }
+
+        fn typeErasedWriteFn(context: *anyopaque, bytes: []const u8) anyerror!usize {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return write(ptr.*, bytes);
+        }
+
+        fn typeErasedFlushWriteFn(context: *anyopaque) anyerror!void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return flushWrite(ptr.*);
+        }
+
+        fn typeErasedDiscardBuffersFn(context: *anyopaque) void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return discardBuffers(ptr.*);
+        }
+
+        fn typeErasedSeekToFn(context: *anyopaque, pos: u64) anyerror!void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return seekTo(ptr, pos);
+        }
+
+        fn typeErasedSeekToDiscardingFn(context: *anyopaque, pos: u64) anyerror!void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return seekToDiscarding(ptr, pos);
+        }
+
+        fn typeErasedSeekByFn(context: *anyopaque, amt: i64) anyerror!void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return seekBy(ptr, amt);
+        }
+
+        fn typeErasedPutBackFn(context: *anyopaque, bytes: []const u8) anyerror!void {
+            const ptr: *Self = @alignCast(@ptrCast(context));
+            return putBack(ptr, bytes);
+        }
+
+        fn typeErasedGetPosFn(context: *const anyopaque) anyerror!u64 {
+            const ptr: *const Self = @alignCast(@ptrCast(context));
+            return getPos(ptr);
+        }
+
+        fn typeErasedGetEndPosFn(context: *const anyopaque) anyerror!u64 {
+            const ptr: *const Self = @alignCast(@ptrCast(context));
+            return getEndPos(ptr);
         }
     };
 }
@@ -565,10 +636,68 @@ pub fn FixedBufferReadWriteStream(comptime Buffer: type, comptime config: ReadWr
 }
 
 pub fn streamFromFixedBuffer(comptime Buffer: type, stream: *std.io.FixedBufferStream(Buffer)) FixedBufferReadWriteStream(Buffer, .{}) {
-    return FixedBufferReadWriteStream(Buffer, .{}){
+    return FixedBufferReadWriteStream(Buffer, .{}) {
         .context = stream,
     };
 }
+
+pub const AnyReadWriteStream = struct {
+    context: *anyopaque,
+    readFn: *const fn (context: *anyopaque, buffer: []u8) anyerror!usize,
+    writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!usize,
+    flushWriteFn: *const fn (context: *anyopaque) anyerror!void,
+    discardBuffersFn: *const fn (context: *anyopaque) void,
+    seekToFn: *const fn (context: *anyopaque, pos: u64) anyerror!void,
+    seekToDiscardingFn: *const fn (context: *anyopaque, pos: u64) anyerror!void,
+    seekByFn: *const fn (context: *anyopaque, amt: i64) anyerror!void,
+    putBackFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
+    getPosFn: *const fn (context: *const anyopaque) anyerror!u64,
+    getEndPosFn: *const fn (context: *const anyopaque) anyerror!u64,
+
+    pub inline fn read(self: AnyReadWriteStream, buffer: []u8) anyerror!usize {
+        return self.readFn(self.context, buffer);
+    }
+
+    pub inline fn write(self: AnyReadWriteStream, bytes: []const u8) anyerror!usize {
+        return self.writeFn(self.context, bytes);
+    }
+
+    pub inline fn flushWrite(self: AnyReadWriteStream) anyerror!void {
+        return self.flushWriteFn(self.context);
+    }
+
+    pub inline fn discardBuffers(self: AnyReadWriteStream) void {
+        return self.discardBuffersFn(self.context);
+    }
+
+    pub inline fn seekTo(self: AnyReadWriteStream, pos: u64) anyerror!void {
+        return self.seekToFn(self.context, pos);
+    }
+
+    pub inline fn seekToDiscarding(self: AnyReadWriteStream, pos: u64) anyerror!void {
+        return self.seekToDiscardingFn(self.context, pos);
+    }
+
+    pub inline fn seekBy(self: AnyReadWriteStream, amt: i64) anyerror!void {
+        return self.seekByFn(self.context, amt);
+    }
+
+    pub inline fn putBack(self: AnyReadWriteStream, bytes: []const u8) anyerror!void {
+        return self.putBackFn(self.context, bytes);
+    }
+
+    pub inline fn putBackByte(self: AnyReadWriteStream, byte: u8) anyerror!void {
+        return self.putBack(&[_]u8{byte});
+    }
+
+    pub inline fn getPos(self: AnyReadWriteStream) anyerror!u64 {
+        return self.getPosFn(self.context);
+    }
+
+    pub inline fn getEndPos(self: AnyReadWriteStream) anyerror!u64 {
+        return self.getEndPosFn(self.context);
+    }
+};
 
 test "ReadWriteStream on a fixed buffer - mixed" {
     var buffer: [64]u8 = .{undefined} ** 64;
@@ -662,7 +791,7 @@ test "ReadWriteStream on a fixed buffer - mixed" {
     std.debug.print("\n13. Flush write past end\n", .{});
     // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     std.debug.assert(68 == try stream.getPos());
-    std.debug.assert(error.NoSpaceLeft == stream.flush_write());
+    std.debug.assert(error.NoSpaceLeft == stream.flushWrite());
 }
 
 test "ReadWriteStream on a fixed buffer - read only" {
@@ -704,7 +833,7 @@ test "ReadWriteStream on a fixed buffer - write only" {
 
     std.debug.assert(std.mem.eql(u8, &(.{0xFF} ** 64), &buffer));
 
-    try stream.flush_write();
+    try stream.flushWrite();
 
     for (0..buffer.len) |i| {
         std.debug.assert(i == buffer[i]);
@@ -713,5 +842,5 @@ test "ReadWriteStream on a fixed buffer - write only" {
     temp[0] = buffer.len;
     std.debug.assert(1 == try stream.write(&temp));
     std.debug.assert(buffer.len + 1 == try stream.getPos());
-    std.debug.assert(error.NoSpaceLeft == stream.flush_write());
+    std.debug.assert(error.NoSpaceLeft == stream.flushWrite());
 }
