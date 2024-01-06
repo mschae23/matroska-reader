@@ -102,11 +102,6 @@ pub fn main() !void {
         "ContentCompression",
     };
 
-    for (ebml_elements) |info| {
-        std.debug.print("Found: {s} (ID 0x{X})\n", .{info.name, info.id});
-        try writer.print("    ElementInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\", }},\n", .{info.id, info.type.toString(), info.name, });
-    }
-
     var hot_info = std.ArrayList(IdInfo).init(allocator);
     defer hot_info.deinit();
 
@@ -120,6 +115,12 @@ pub fn main() !void {
         for (all_info.items) |info| {
             allocator.free(info.name);
         }
+    }
+
+    for (ebml_elements) |info| {
+        std.debug.print("Found: {s} (ID 0x{X})\n", .{info.name, info.id});
+        try all_info.append(IdInfo { .id = info.id, .type = info.type, .name = try allocator.dupe(u8, info.name), .deprecated = info.deprecated, });
+        try writer.print("    ElementInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\", }},\n", .{info.id, info.type.toString(), info.name, });
     }
 
     while (true) {

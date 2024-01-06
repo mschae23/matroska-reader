@@ -336,6 +336,19 @@ pub const IMPORTANT_ELEMENTS = [_]IdInfo {
     IdInfo { .id = 0x5034, .type = .master, .name = "ContentCompression" },
 };
 
+pub const ID_EBML: u32 = 0x1A45DFA3;
+pub const ID_EBMLVersion: u32 = 0x4286;
+pub const ID_EBMLReadVersion: u32 = 0x42F7;
+pub const ID_EBMLMaxIDLength: u32 = 0x42F2;
+pub const ID_EBMLMaxSizeLength: u32 = 0x42F3;
+pub const ID_DocType: u32 = 0x4282;
+pub const ID_DocTypeVersion: u32 = 0x4287;
+pub const ID_DocTypeReadVersion: u32 = 0x4285;
+pub const ID_DocTypeExtension: u32 = 0x4281;
+pub const ID_DocTypeExtensionName: u32 = 0x4283;
+pub const ID_DocTypeExtensionVersion: u32 = 0x4284;
+pub const ID_Void: u32 = 0xEC;
+pub const ID_CRC32: u32 = 0xBF;
 pub const ID_Segment: u32 = 0x18538067;
 pub const ID_SeekHead: u32 = 0x114D9B74;
 pub const ID_Seek: u32 = 0x4DBB;

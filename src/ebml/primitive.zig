@@ -89,8 +89,12 @@ pub inline fn readVint(reader: std.io.AnyReader) anyerror!u64 {
 ///
 /// **Note**: This function does not check whether the ID is encoded in a valid way, or if an element with that ID even exists.
 pub inline fn readElementId(reader: std.io.AnyReader) anyerror!ElementId {
+    const vint = try readVintRaw(reader);
+    // Skip the "and" step of getVintValue; Element IDs appear to include the VINT_WIDTH and VINT_MARKER bits
+    const value = vint.raw >> @as(u6, @intCast(64 - 8 * vint.octets));
+
     // Don't check whether the ID is encoded in an invalid way
-    return ElementId { .id = try readVint(reader) };
+    return ElementId { .id = value, };
 }
 
 pub const UNKNOWN_DATA_SIZE: u64 = std.math.maxInt(u64);
@@ -341,6 +345,17 @@ test "readVint (2 in different sizes)" {
 
         std.debug.assert(2 == value);
     }
+}
+
+
+test "readVint (ID_EBML)" {
+    const ebml: u32 = 0b0001_1010_0100_0101_1101_1111_1010_0011;
+
+    const bytes = comptime std.mem.toBytes(std.mem.nativeToBig(u32, ebml));
+    var stream = std.io.fixedBufferStream(&bytes);
+    const reader = stream.reader().any();
+
+    std.debug.assert(@import("../matroska_id_table.zig").ID_EBML == (try readElementId(reader)).id);
 }
 
 test "UNKNOWN_DATA_SIZE value" {

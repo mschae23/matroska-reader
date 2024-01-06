@@ -146,6 +146,11 @@ pub fn ReadWriteStream(
         /// an accurate user-facing seek position in `getPos()`.
         write_buf_offset: usize = 0,
 
+        /// This is **not** part of the public API. Modifying this value is unsafe.
+        ///
+        /// The current user-facing seek position in the stream.
+        position: usize = 0,
+
         const Self = @This();
 
         /// The type of errors that can occur while flushing the write buffer.
@@ -333,6 +338,7 @@ pub fn ReadWriteStream(
                 }
 
                 self.read_buf_start += written;
+                self.position += written;
                 dest_index += written;
             }
 
@@ -363,6 +369,7 @@ pub fn ReadWriteStream(
             const previous_read_start = self.read_buf_start;
             self.read_buf_start = @min(self.read_buf_start + bytes.len, self.read_buf_end);
             self.write_buf_offset += (previous_read_start + bytes.len) - self.read_buf_start;
+            self.position += bytes.len;
 
             if (self.read_buf_start == self.read_buf_end and self.read_buf_start != 0 and previous_read_start + bytes.len > self.read_buf_start) {
                 self.read_buf_end = 0;
@@ -460,6 +467,7 @@ pub fn ReadWriteStream(
             }
 
             self.discardBuffers();
+            self.position = pos;
             return self.underlyingSeekTo(pos);
         }
 
@@ -471,6 +479,7 @@ pub fn ReadWriteStream(
             std.debug.print("Seek to {d} (discarding)\n", .{pos});
 
             self.discardBuffers();
+            self.position = pos;
             return self.underlyingSeekTo(pos);
         }
 
@@ -495,11 +504,14 @@ pub fn ReadWriteStream(
                 self.read_buf_end = 0;
                 self.read_buf_start = 0;
             }
+
+            self.position = @intCast(@as(i64, @intCast(self.position)) + amt);
         }
 
         pub fn getPos(self: *const Self) GetSeekPosError!u64 {
-            std.debug.print("Get position: underlying: {d}, read: {d}..{d}, write offset: {d}, write: {d}..{d}\n", .{try self.underlyingGetPos(), self.read_buf_start, self.read_buf_end, self.write_buf_offset, self.write_buf_start, self.write_buf_end});
-            return try self.underlyingGetPos() + self.read_buf_start - self.read_buf_end + self.write_buf_offset;
+            // // std.debug.print("Get position: underlying: {d}, read: {d}..{d}, write offset: {d}, write: {d}..{d}\n", .{try self.underlyingGetPos(), self.read_buf_start, self.read_buf_end, self.write_buf_offset, self.write_buf_start, self.write_buf_end});
+            // return try self.underlyingGetPos() + self.read_buf_start - self.read_buf_end + self.write_buf_offset;
+            return self.position;
         }
 
         /// Puts back `bytes` into the stream, so they will be read again.
@@ -533,6 +545,8 @@ pub fn ReadWriteStream(
                 self.read_buf_start = 0;
                 self.read_buf_end = bytes.len;
             }
+
+            self.position -= bytes.len;
         }
 
         /// Puts back a single byte `byte` into the stream, so it will be read again.
@@ -565,43 +579,50 @@ pub fn ReadWriteStream(
             };
         }
 
-        fn typeErasedReadFn(context: *anyopaque, buffer: []u8) anyerror!usize {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        pub inline fn any_reader(self: *Self) std.io.AnyReader {
+            return std.io.AnyReader {
+                .context = @ptrCast(self),
+                .readFn = typeErasedReadFn,
+            };
+        }
+
+        fn typeErasedReadFn(context: *const anyopaque, buffer: []u8) anyerror!usize {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return read(ptr, buffer);
         }
 
-        fn typeErasedWriteFn(context: *anyopaque, bytes: []const u8) anyerror!usize {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedWriteFn(context: *const anyopaque, bytes: []const u8) anyerror!usize {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return write(ptr.*, bytes);
         }
 
-        fn typeErasedFlushWriteFn(context: *anyopaque) anyerror!void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedFlushWriteFn(context: *const anyopaque) anyerror!void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return flushWrite(ptr.*);
         }
 
-        fn typeErasedDiscardBuffersFn(context: *anyopaque) void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedDiscardBuffersFn(context: *const anyopaque) void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return discardBuffers(ptr.*);
         }
 
-        fn typeErasedSeekToFn(context: *anyopaque, pos: u64) anyerror!void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedSeekToFn(context: *const anyopaque, pos: u64) anyerror!void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return seekTo(ptr, pos);
         }
 
-        fn typeErasedSeekToDiscardingFn(context: *anyopaque, pos: u64) anyerror!void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedSeekToDiscardingFn(context: *const anyopaque, pos: u64) anyerror!void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return seekToDiscarding(ptr, pos);
         }
 
-        fn typeErasedSeekByFn(context: *anyopaque, amt: i64) anyerror!void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedSeekByFn(context: *const anyopaque, amt: i64) anyerror!void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return seekBy(ptr, amt);
         }
 
-        fn typeErasedPutBackFn(context: *anyopaque, bytes: []const u8) anyerror!void {
-            const ptr: *Self = @alignCast(@ptrCast(context));
+        fn typeErasedPutBackFn(context: *const anyopaque, bytes: []const u8) anyerror!void {
+            const ptr: *Self = @constCast(@ptrCast(@alignCast(context)));
             return putBack(ptr, bytes);
         }
 

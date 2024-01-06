@@ -21,6 +21,7 @@ zig-out/
 # Project
 /info/
 /scripts/matroska_schema.xml
+/test/
 
 # IntelliJ IDEA
 .idea/
