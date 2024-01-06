@@ -257,6 +257,12 @@ pub fn main() !void {
         try writer.print("    IdInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\" }},\n", .{info.id, info.type.toString(), info.name});
     }
 
+    try writer.writeAll("};\n\npub const EBML_HEADER_ELEMENTS = [_]IdInfo {\n");
+
+    for (ebml_elements) |info| {
+        try writer.print("    IdInfo {{ .id = 0x{X}, .type = .{s}, .name = \"{s}\" }},\n", .{info.id, info.type.toString(), info.name});
+    }
+
     try writer.writeAll("};\n\n");
 
     for (all_info.items) |info| {

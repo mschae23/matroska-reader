@@ -336,6 +336,22 @@ pub const IMPORTANT_ELEMENTS = [_]IdInfo {
     IdInfo { .id = 0x5034, .type = .master, .name = "ContentCompression" },
 };
 
+pub const EBML_HEADER_ELEMENTS = [_]IdInfo {
+    IdInfo { .id = 0x1A45DFA3, .type = .master, .name = "EBML" },
+    IdInfo { .id = 0x4286, .type = .uinteger, .name = "EBMLVersion" },
+    IdInfo { .id = 0x42F7, .type = .uinteger, .name = "EBMLReadVersion" },
+    IdInfo { .id = 0x42F2, .type = .uinteger, .name = "EBMLMaxIDLength" },
+    IdInfo { .id = 0x42F3, .type = .uinteger, .name = "EBMLMaxSizeLength" },
+    IdInfo { .id = 0x4282, .type = .string, .name = "DocType" },
+    IdInfo { .id = 0x4287, .type = .uinteger, .name = "DocTypeVersion" },
+    IdInfo { .id = 0x4285, .type = .uinteger, .name = "DocTypeReadVersion" },
+    IdInfo { .id = 0x4281, .type = .master, .name = "DocTypeExtension" },
+    IdInfo { .id = 0x4283, .type = .string, .name = "DocTypeExtensionName" },
+    IdInfo { .id = 0x4284, .type = .uinteger, .name = "DocTypeExtensionVersion" },
+    IdInfo { .id = 0xEC, .type = .binary, .name = "Void" },
+    IdInfo { .id = 0xBF, .type = .binary, .name = "CRC32" },
+};
+
 pub const ID_EBML: u32 = 0x1A45DFA3;
 pub const ID_EBMLVersion: u32 = 0x4286;
 pub const ID_EBMLReadVersion: u32 = 0x42F7;

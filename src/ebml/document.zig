@@ -40,7 +40,7 @@ pub const DoctypeExtension = struct {
 /// [`SeekableStream`]: std.io.SeekableStream
 pub fn EbmlDocument(comptime ReadWriteStream: type) type {
     return struct {
-        /// The allocator runtime-sized data found in the EBML header. Currently, this is only used for the
+        /// The allocator is used for runtime-sized data found in the EBML header. Currently, this is only used for the
         /// DocType names and extension list.
         ///
         /// This allocator **should not** be used by API users of `EbmlDocument`.
@@ -268,6 +268,69 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             self.path[self.path_len] = MasterElementNestData { .id = id, .end_pos = self.stream.getPos() + size, };
             self.path_len += 1;
         }
+
+        /// Skip an element.
+        ///
+        /// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+        /// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+        /// the end of the stream. If it fails, the stream position may end up anywhere within the element.
+        pub fn skipElement(self: *Self) anyerror!void {
+            const size = try primitive.readElementDataSize(self.stream.any_reader());
+            try self.stream.seekBy(@intCast(size));
+        }
+
+        pub fn trimPath(self: *Self) void {
+            const pos = self.stream.getPos();
+            var i: u8 = 0;
+
+            while (i != self.path_len) {
+                // Reverse order. Should be safe, as:
+                //      i != path_len
+                //   -> i <  path_len
+                //   -> (path_len - i) >= 1
+                //   -> (path_len - i) - 1 >= 0
+                const j = self.path_len - i - 1;
+
+                const data = self.path[j];
+                i += 1;
+
+                if (data.end_pos <= pos) {
+                    self.path_len = j;
+                    i = 0;
+                }
+            }
+        }
+
+        /// Read the EBML header.
+        ///
+        /// If the header is not found or is not correct, `error.InvalidHeader` will be returned.
+        pub fn readHeader(self: *Self) anyerror!void {
+            std.debug.assert(0 == self.path_len);
+
+            const ebml_id = try self.readElementId();
+
+            if (ebml_id.id != matroska.ID_EBML) {
+                return error.InvalidHeader;
+            }
+
+            // \EBML
+            try self.readMaster(ebml_id);
+            self.trimPath();
+
+            while (self.path_len != 0) {
+                const id = try self.readElementId();
+
+                switch (id.id) {
+                    // TODO
+                    else => {
+                        log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
+                        try self.skipElement();
+                    },
+                }
+
+                self.trimPath();
+            }
+        }
     };
 }
 
@@ -279,7 +342,5 @@ test "EbmlDocument on Matroska test file" {
     var stream = io.streamFromFile(file);
     var document = try EbmlDocument(@TypeOf(stream)).init(std.testing.allocator, &stream);
 
-    const id = try document.readElementId();
-    std.debug.print("Element ID: {x}\n", .{id.id});
-    try document.readMaster(id);
+    try document.readHeader();
 }

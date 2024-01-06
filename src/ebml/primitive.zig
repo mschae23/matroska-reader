@@ -343,7 +343,7 @@ test "readVint (2 in different sizes)" {
         const value = try readVint(reader);
         // std.debug.print("Value: {d} ({b})\n", .{value, value});
 
-        std.debug.assert(2 == value);
+        try std.testing.expectEqual(@as(u64, 2), value);
     }
 }
 
@@ -355,11 +355,11 @@ test "readVint (ID_EBML)" {
     var stream = std.io.fixedBufferStream(&bytes);
     const reader = stream.reader().any();
 
-    std.debug.assert(@import("../matroska_id_table.zig").ID_EBML == (try readElementId(reader)).id);
+    try std.testing.expectEqual(@as(u64, @import("../matroska_id_table.zig").ID_EBML),  (try readElementId(reader)).id);
 }
 
 test "UNKNOWN_DATA_SIZE value" {
-    std.debug.assert(UNKNOWN_DATA_SIZE == ~@as(u64, 0));
+    try std.testing.expectEqual(UNKNOWN_DATA_SIZE,  ~@as(u64, 0));
 }
 
 test "readElementDataSize" {
@@ -380,18 +380,18 @@ test "readElementDataSize" {
         readers[i] = fixedBufferStreams[i].reader().any();
     }
 
-    std.debug.assert(UNKNOWN_DATA_SIZE == try readElementDataSize(readers[0]));
-    std.debug.assert(127 == try readElementDataSize(readers[1]));
-    std.debug.assert(127 == try readElementDataSize(readers[2]));
-    std.debug.assert(UNKNOWN_DATA_SIZE == try readElementDataSize(readers[3]));
-    std.debug.assert(16_383 == try readElementDataSize(readers[4]));
+    try std.testing.expectEqual(@as(u64, UNKNOWN_DATA_SIZE),  try readElementDataSize(readers[0]));
+    try std.testing.expectEqual(@as(u64, 127),  try readElementDataSize(readers[1]));
+    try std.testing.expectEqual(@as(u64, 127),  try readElementDataSize(readers[2]));
+    try std.testing.expectEqual(@as(u64, UNKNOWN_DATA_SIZE), try readElementDataSize(readers[3]));
+    try std.testing.expectEqual(@as(u64, 16_383),  try readElementDataSize(readers[4]));
 }
 
 test "Right-shift" {
     const bytes: [4]u8 = .{0b1111_0000, 0, 0, 0};
     var value = std.mem.bigToNative(i32, std.mem.bytesToValue(i32, &bytes));
     value >>= (4 - 1) * 8;
-    std.debug.assert(-16 == value);
+    try std.testing.expectEqual(@as(i32, -16),  value);
 }
 
 test "readSignedInteger" {
@@ -415,17 +415,17 @@ test "readSignedInteger" {
     }
 
     // std.debug.print("\n", .{});
-    std.debug.assert(-300 == try readSignedInteger(readers[0], null));
-    std.debug.assert(127 == try readSignedInteger(readers[1], null));
-    std.debug.assert(127 == try readSignedInteger(readers[2], null));
-    std.debug.assert(-1 == try readSignedInteger(readers[3], null));
-    std.debug.assert(16_383 == try readSignedInteger(readers[4], null));
-    std.debug.assert(0 == try readSignedInteger(readers[5], null));
+    try std.testing.expectEqual(@as(i64, -300),  try readSignedInteger(readers[0], null));
+    try std.testing.expectEqual(@as(i64, 127),  try readSignedInteger(readers[1], null));
+    try std.testing.expectEqual(@as(i64, 127),  try readSignedInteger(readers[2], null));
+    try std.testing.expectEqual(@as(i64, -1),  try readSignedInteger(readers[3], null));
+    try std.testing.expectEqual(@as(i64, 16_383),  try readSignedInteger(readers[4], null));
+    try std.testing.expectEqual(@as(i64, 0),  try readSignedInteger(readers[5], null));
     fixedBufferStreams[5].pos = 0;
-    std.debug.assert(0 == try readSignedInteger(readers[5], 70));
-    std.debug.assert(0 == try readSignedInteger(readers[6], null));
+    try std.testing.expectEqual(@as(i64, 0),  try readSignedInteger(readers[5], 70));
+    try std.testing.expectEqual(@as(i64, 0),  try readSignedInteger(readers[6], null));
     fixedBufferStreams[6].pos = 0;
-    std.debug.assert(70 == try readSignedInteger(readers[6], 70));
+    try std.testing.expectEqual(@as(i64, 70),  try readSignedInteger(readers[6], 70));
 }
 
 test "readUnsignedInteger" {
@@ -449,17 +449,17 @@ test "readUnsignedInteger" {
     }
 
     // std.debug.print("\n", .{});
-    std.debug.assert(65236 == try readUnsignedInteger(readers[0], null));
-    std.debug.assert(127 == try readUnsignedInteger(readers[1], null));
-    std.debug.assert(127 == try readUnsignedInteger(readers[2], null));
-    std.debug.assert(281474976710655 == try readUnsignedInteger(readers[3], null));
-    std.debug.assert(16_383 == try readUnsignedInteger(readers[4], null));
-    std.debug.assert(0 == try readUnsignedInteger(readers[5], null));
+    try std.testing.expectEqual(@as(u64, 65236),  try readUnsignedInteger(readers[0], null));
+    try std.testing.expectEqual(@as(u64, 127),  try readUnsignedInteger(readers[1], null));
+    try std.testing.expectEqual(@as(u64, 127),  try readUnsignedInteger(readers[2], null));
+    try std.testing.expectEqual(@as(u64, 281474976710655),  try readUnsignedInteger(readers[3], null));
+    try std.testing.expectEqual(@as(u64, 16_383),  try readUnsignedInteger(readers[4], null));
+    try std.testing.expectEqual(@as(u64, 0),  try readUnsignedInteger(readers[5], null));
     fixedBufferStreams[5].pos = 0;
-    std.debug.assert(0 == try readUnsignedInteger(readers[5], 70));
-    std.debug.assert(0 == try readUnsignedInteger(readers[6], null));
+    try std.testing.expectEqual(@as(u64, 0),  try readUnsignedInteger(readers[5], 70));
+    try std.testing.expectEqual(@as(u64, 0),  try readUnsignedInteger(readers[6], null));
     fixedBufferStreams[6].pos = 0;
-    std.debug.assert(70 == try readUnsignedInteger(readers[6], 70));
+    try std.testing.expectEqual(@as(u64, 70),  try readUnsignedInteger(readers[6], 70));
 }
 
 test "readFloat" {
@@ -482,7 +482,7 @@ test "readFloat" {
         const value = try readFloat(reader, null);
 
         // std.debug.print("32, value: {d}\n", .{value});
-        std.debug.assert(@as(f64, expected) == value);
+        try std.testing.expectEqual(@as(f64, expected),  value);
     }
 
     inline for (expected_64) |expected| {
@@ -492,7 +492,7 @@ test "readFloat" {
         const value = try readFloat(reader, null);
 
         // std.debug.print("64, value: {d}\n", .{value});
-        std.debug.assert(expected == value);
+        try std.testing.expectEqual(expected, value);
     }
 }
 
