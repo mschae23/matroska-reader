@@ -4,6 +4,8 @@
 
 const std = @import("std");
 
+const DEBUG_LOG: bool = false;
+
 /// Error that can occur in any operation when the [`ReadWriteStream`] is an invalid state.
 /// It can only be reset by seeking to a known position.
 ///
@@ -309,7 +311,7 @@ pub fn ReadWriteStream(
                 return error.Unrecoverable;
             }
 
-            std.debug.print("Read {d} bytes\n", .{dest.len});
+            if (comptime DEBUG_LOG) std.debug.print("Read {d} bytes\n", .{dest.len});
 
             if (!self.isWriteBufferEmpty()) {
                 try self.flushWrite();
@@ -351,7 +353,7 @@ pub fn ReadWriteStream(
                 return error.Unrecoverable;
             }
 
-            std.debug.print("Write {d} bytes\n", .{bytes.len});
+            if (comptime DEBUG_LOG) std.debug.print("Write {d} bytes\n", .{bytes.len});
 
             if (self.write_buf_end + bytes.len > self.write_buf.len) {
                 try self.flushWrite();
@@ -385,7 +387,7 @@ pub fn ReadWriteStream(
                 return error.Unrecoverable;
             }
 
-            std.debug.print("Flush write ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
+            if (comptime DEBUG_LOG) std.debug.print("Flush write ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
 
             var seek_by: usize = if (self.read_buf_end != 0) self.read_buf_end - self.read_buf_start + self.write_buf_end - self.write_buf_start else 0;
 
@@ -449,7 +451,7 @@ pub fn ReadWriteStream(
         ///
         /// [`seekTo`]: seekTo
         pub fn discardBuffers(self: *Self) void {
-            std.debug.print("Discard buffers\n", .{});
+            if (comptime DEBUG_LOG) std.debug.print("Discard buffers\n", .{});
             self.read_buf_end = 0;
             self.read_buf_start = 0;
             self.write_buf_end = 0;
@@ -460,7 +462,7 @@ pub fn ReadWriteStream(
 
         /// Seeks to the given position in the stream.
         pub fn seekTo(self: *Self, pos: u64) SeekError!void {
-            std.debug.print("Seek to {d}\n", .{pos});
+            if (comptime DEBUG_LOG) std.debug.print("Seek to {d}\n", .{pos});
 
             if (!self.isWriteBufferEmpty()) {
                 try self.flushWrite();
@@ -476,7 +478,7 @@ pub fn ReadWriteStream(
         ///
         /// This function also resets the `unrecoverable` flag, so it can be used to seek to a known position after an error to retry.
         pub fn seekToDiscarding(self: *Self, pos: u64) UnderlyingSeekError!void {
-            std.debug.print("Seek to {d} (discarding)\n", .{pos});
+            if (comptime DEBUG_LOG) std.debug.print("Seek to {d} (discarding)\n", .{pos});
 
             self.discardBuffers();
             self.position = pos;
@@ -489,17 +491,17 @@ pub fn ReadWriteStream(
                 return error.Unrecoverable;
             }
 
-            std.debug.print("Seek by {d} bytes\n", .{amt});
+            if (comptime DEBUG_LOG) std.debug.print("Seek by {d} bytes\n", .{amt});
 
             if (!self.isWriteBufferEmpty()) {
                 try self.flushWrite();
             }
 
             if (@as(i64, @intCast(self.read_buf_start)) + amt < @as(i64, @intCast(self.read_buf_end)) and @as(i64, @intCast(self.read_buf_start)) + amt >= 0) {
-                std.debug.print("Reusing read buffer for seek\n", .{});
+                if (comptime DEBUG_LOG) std.debug.print("Reusing read buffer for seek\n", .{});
                 self.read_buf_start = @intCast(@as(i64, @intCast(self.read_buf_start)) + amt);
             } else {
-                std.debug.print("Discarding buffers for seek\n", .{});
+                if (comptime DEBUG_LOG) std.debug.print("Discarding buffers for seek\n", .{});
                 try self.underlyingSeekBy(amt - @as(i64, @intCast(self.read_buf_end)) + @as(i64, @intCast(self.read_buf_start)));
                 self.read_buf_end = 0;
                 self.read_buf_start = 0;
@@ -508,7 +510,7 @@ pub fn ReadWriteStream(
             self.position = @intCast(@as(i64, @intCast(self.position)) + amt);
         }
 
-        pub fn getPos(self: *const Self) GetSeekPosError!u64 {
+        pub fn getPos(self: *const Self) u64 {
             // // std.debug.print("Get position: underlying: {d}, read: {d}..{d}, write offset: {d}, write: {d}..{d}\n", .{try self.underlyingGetPos(), self.read_buf_start, self.read_buf_end, self.write_buf_offset, self.write_buf_start, self.write_buf_end});
             // return try self.underlyingGetPos() + self.read_buf_start - self.read_buf_end + self.write_buf_offset;
             return self.position;
@@ -525,7 +527,7 @@ pub fn ReadWriteStream(
                 return error.Unrecoverable;
             }
 
-            std.debug.print("Put back {d} bytes\n", .{bytes.len});
+            if (comptime DEBUG_LOG) std.debug.print("Put back {d} bytes\n", .{bytes.len});
 
             if (!self.isWriteBufferEmpty()) {
                 try self.flushWrite();
@@ -559,7 +561,7 @@ pub fn ReadWriteStream(
         }
 
         inline fn isWriteBufferEmpty(self: *const Self) bool {
-            std.debug.print("Is write buffer empty ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
+            if (comptime DEBUG_LOG) std.debug.print("Is write buffer empty ({d}..{d})\n", .{self.write_buf_start, self.write_buf_end});
             return self.write_buf_end == self.write_buf_start; // end - start == 0
         }
 
@@ -736,14 +738,14 @@ test "ReadWriteStream on a fixed buffer - mixed" {
     var temp: [4]u8 = .{0xFF} ** 4;
 
     std.debug.print("01. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(0 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(0 == stream.getPos());
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{0, 1, 2, 3}, &temp));
 
     std.debug.print("\n02. Write\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(4 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(4 == stream.getPos());
     temp = .{9, 8, 7, 6};
     std.debug.assert(4 == try stream.write(&temp));
 
@@ -751,67 +753,67 @@ test "ReadWriteStream on a fixed buffer - mixed" {
     std.debug.assert(std.mem.eql(u8, &.{4, 5, 6, 7}, buffer[4..8]));
 
     std.debug.print("\n03. Seek\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(8 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(8 == stream.getPos());
     try stream.seekBy(-4);
 
     std.debug.print("\n04. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(4 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(4 == stream.getPos());
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.print("{any}\n", .{temp});
     std.debug.assert(std.mem.eql(u8, &.{9, 8, 7, 6}, &temp));
     std.debug.assert(std.mem.eql(u8, &.{9, 8, 7, 6}, buffer[4..8]));
 
     std.debug.print("\n05. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(8 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(8 == stream.getPos());
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{8, 9, 10, 11}, &temp));
 
     std.debug.print("\n06. Put back\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(12 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(12 == stream.getPos());
     try stream.putBack(temp[2..]);
 
     std.debug.print("\n07. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(10 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(10 == stream.getPos());
     std.debug.assert(4 == try stream.read(&temp));
     std.debug.assert(std.mem.eql(u8, &.{10, 11, 12, 13}, &temp));
 
     std.debug.print("\n08. Seek by\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(14 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(14 == stream.getPos());
     try stream.seekBy(47);
 
     std.debug.print("\n09. Get pos\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(61 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(61 == stream.getPos());
     std.debug.assert(64 == try stream.getEndPos());
 
     std.debug.print("\n10. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     std.debug.assert(3 == try stream.read(&temp));
     std.debug.print("Read: {any}\n", .{temp});
     std.debug.assert(std.mem.eql(u8, &.{61, 62, 63, 13}, &temp));
 
     std.debug.print("\n11. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(64 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(64 == stream.getPos());
     std.debug.assert(0 == try stream.read(&temp));
 
     std.debug.print("\n12. Write past end\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     // Even though the backing stream does not support more than 64 bytes, this will succeed, as the bytes will be
     // stored in the write buffer
     temp = .{0xA0, 0xA1, 0xA2, 0xA3};
-    std.debug.assert(64 == try stream.getPos());
+    std.debug.assert(64 == stream.getPos());
     std.debug.assert(4 == try stream.write(&temp));
 
     std.debug.print("\n13. Flush write past end\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{try stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
-    std.debug.assert(68 == try stream.getPos());
+    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    std.debug.assert(68 == stream.getPos());
     std.debug.assert(error.NoSpaceLeft == stream.flushWrite());
 }
 
@@ -830,12 +832,12 @@ test "ReadWriteStream on a fixed buffer - read only" {
     for (0..buffer.len) |i| {
         std.debug.assert(1 == try stream.read(&temp));
         std.debug.assert(i == temp[0]);
-        std.debug.assert(i + 1 == try stream.getPos());
+        std.debug.assert(i + 1 == stream.getPos());
     }
 
     std.debug.assert(0 == try stream.read(&temp));
     std.debug.assert(buffer.len - 1 == temp[0]);
-    std.debug.assert(buffer.len == try stream.getPos());
+    std.debug.assert(buffer.len == stream.getPos());
 }
 
 test "ReadWriteStream on a fixed buffer - write only" {
@@ -849,7 +851,7 @@ test "ReadWriteStream on a fixed buffer - write only" {
     for (0..buffer.len) |i| {
         temp[0] = @intCast(i);
         std.debug.assert(1 == try stream.write(&temp));
-        std.debug.assert(i + 1 == try stream.getPos());
+        std.debug.assert(i + 1 == stream.getPos());
     }
 
     std.debug.assert(std.mem.eql(u8, &(.{0xFF} ** 64), &buffer));
@@ -862,6 +864,6 @@ test "ReadWriteStream on a fixed buffer - write only" {
 
     temp[0] = buffer.len;
     std.debug.assert(1 == try stream.write(&temp));
-    std.debug.assert(buffer.len + 1 == try stream.getPos());
+    std.debug.assert(buffer.len + 1 == stream.getPos());
     std.debug.assert(error.NoSpaceLeft == stream.flushWrite());
 }
