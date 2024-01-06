@@ -238,11 +238,9 @@ pub fn readBinaryAllAlloc(reader: std.io.AnyReader, allocator: std.mem.Allocator
         return error.BufTooSmall;
     }
 
-    const buf = try reader.readAllAlloc(allocator, @min(size, max_size));
-
-    if (buf.len != @min(size, max_size)) { // < @min(size, max_size)
-        return error.EndOfStream;
-    }
+    const buf = try allocator.alloc(u8, @min(size, max_size));
+    errdefer allocator.free(buf);
+    try reader.readNoEof(buf);
 
     return buf;
 }

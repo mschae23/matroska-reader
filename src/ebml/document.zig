@@ -22,7 +22,7 @@ const ElementId = primitive.ElementId;
 
 pub const MasterElementNestData = struct {
     id: ElementId,
-    end_pos: usize,
+    end_pos: ?usize,
 };
 
 /// Represents a version of a DocType extension.
@@ -101,7 +101,7 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                 .allocator = allocator,
                 .stream = stream,
 
-                .ebml_version = EBML_VERSION + 1, .ebml_read_version = EBML_VERSION + 1,
+                .ebml_version = 1, .ebml_read_version = 1,
                 .ebml_max_id_length = 4, .ebml_max_size_length = 8,
                 .doctype = &.{},
                 .doctype_version = std.math.maxInt(u32), .doctype_read_version = std.math.maxInt(u32),
@@ -265,7 +265,9 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             const size = try primitive.readElementDataSize(self.stream.any_reader());
             std.debug.print("Element data size: {d}\n", .{size});
 
-            self.path[self.path_len] = MasterElementNestData { .id = id, .end_pos = self.stream.getPos() + size, };
+            const end_pos: ?usize = if (size == primitive.UNKNOWN_DATA_SIZE) null else self.stream.getPos() + size;
+
+            self.path[self.path_len] = MasterElementNestData { .id = id, .end_pos = end_pos, };
             self.path_len += 1;
         }
 
@@ -294,9 +296,11 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                 const data = self.path[j];
                 i += 1;
 
-                if (data.end_pos <= pos) {
-                    self.path_len = j;
-                    i = 0;
+                if (data.end_pos) |end_pos| {
+                    if (end_pos <= pos) {
+                        self.path_len = j;
+                        i = 0;
+                    }
                 }
             }
         }
@@ -304,6 +308,8 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
         /// Read the EBML header.
         ///
         /// If the header is not found or is not correct, `error.InvalidHeader` will be returned.
+        ///
+        /// Do not call this function multiple times for the same instance of `EbmlDocument`.
         pub fn readHeader(self: *Self) anyerror!void {
             std.debug.assert(0 == self.path_len);
 
@@ -317,11 +323,80 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             try self.readMaster(ebml_id);
             self.trimPath();
 
-            while (self.path_len != 0) {
+            while (self.path_len > 0 and self.path[self.path_len - 1].id.id == ebml_id.id) {
                 const id = try self.readElementId();
 
                 switch (id.id) {
-                    // TODO
+                    matroska.ID_EBMLVersion => {
+                        self.ebml_version = @intCast(try self.readUnsignedInteger(1));
+                    },
+                    matroska.ID_EBMLReadVersion => {
+                        self.ebml_read_version = @intCast(try self.readUnsignedInteger(1));
+                    },
+                    matroska.ID_EBMLMaxIDLength => {
+                        self.ebml_max_id_length = @intCast(try self.readUnsignedInteger(4));
+                    },
+                    matroska.ID_EBMLMaxSizeLength => {
+                        self.ebml_max_size_length = @intCast(try self.readUnsignedInteger(8));
+                    },
+                    matroska.ID_DocType => {
+                        self.doctype = try self.readBinaryAllAlloc(self.allocator, 64);
+                    },
+                    matroska.ID_DocTypeVersion => {
+                        self.doctype_version = @intCast(try self.readUnsignedInteger(1));
+                    },
+                    matroska.ID_DocTypeReadVersion => {
+                        self.doctype_read_version = @intCast(try self.readUnsignedInteger(1));
+                    },
+                    matroska.ID_DocTypeExtension => {
+                        try self.readMaster(id);
+                        self.trimPath();
+
+                        var name: ?[]u8 = null;
+                        var version: ?u32 = null;
+
+                        errdefer if (name) |n| self.allocator.free(n);
+
+                        while (self.path_len > 0 and self.path[self.path_len - 1].id.id == id.id) {
+                            const extension_nest_id = try self.readElementId();
+
+                            switch (extension_nest_id.id) {
+                                matroska.ID_DocTypeExtensionName => {
+                                    if (name) |n| {
+                                        self.allocator.free(n);
+                                    }
+
+                                    name = try self.readBinaryAllAlloc(self.allocator, 64);
+                                },
+                                matroska.ID_DocTypeExtensionVersion => {
+                                    version = @intCast(try self.readUnsignedInteger(null));
+                                },
+                                else => {
+                                    log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
+                                    try self.skipElement();
+                                },
+                            }
+                        }
+
+                        if (name) |n| {
+                            if (version) |v| {
+                                try self.doctype_extensions.append(self.allocator, DoctypeExtension { .name = n, .version = v, });
+                            } else {
+                                log.warn("Incomplete DocType extension element found (\"{s}\"). Skipping.", .{n});
+                                self.allocator.free(n);
+                            }
+                        } else {
+                            log.warn("Incomplete DocType extension element found. Skipping.", .{});
+                        }
+                    },
+                    matroska.ID_Void => {
+                        log.warn("Skipping Void", .{});
+                        try self.skipElement();
+                    },
+                    matroska.ID_CRC32 => {
+                        log.warn("Skipping CRC32", .{});
+                        try self.skipElement();
+                    },
                     else => {
                         log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
                         try self.skipElement();
@@ -341,6 +416,14 @@ test "EbmlDocument on Matroska test file" {
 
     var stream = io.streamFromFile(file);
     var document = try EbmlDocument(@TypeOf(stream)).init(std.testing.allocator, &stream);
+    defer document.deinit();
 
     try document.readHeader();
+
+    std.debug.print("EBML document:\n  EBML version: {d}\n  EBML read version: {d}\n  EBML max ID length: {d}\n  EBML max size length: {d}\n  DocType: {s}\n  DocType version: {d}\n  DocType read version: {d}\n  DocType extensions: {d}\n", .{
+        document.ebml_version, document.ebml_read_version, document.ebml_max_id_length, document.ebml_max_size_length, document.doctype, document.doctype_version, document.doctype_read_version, document.doctype_extensions.items.len});
+
+    for (document.doctype_extensions.items) |extension| {
+        std.debug.print("  - Name: {s}\n    Version: {d}\n", .{extension.name, extension.version});
+    }
 }
