@@ -729,7 +729,7 @@ test "ReadWriteStream on a fixed buffer - mixed" {
         value.* = @intCast(i);
     }
 
-    std.debug.print("00. Setup\n", .{});
+    if (comptime DEBUG_LOG) std.debug.print("00. Setup\n", .{});
     var fixed_buf = std.io.fixedBufferStream(&buffer);
     var stream = streamFromFixedBuffer([]u8, &fixed_buf);
 
@@ -737,14 +737,14 @@ test "ReadWriteStream on a fixed buffer - mixed" {
 
     var temp: [4]u8 = .{0xFF} ** 4;
 
-    std.debug.print("01. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("01. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 0), stream.getPos());
     try std.testing.expectEqual(@as(usize, 4), try stream.read(&temp));
     try std.testing.expectEqualSlices(u8, &.{0, 1, 2, 3}, &temp);
 
-    std.debug.print("\n02. Write\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n02. Write\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 4), stream.getPos());
     temp = .{9, 8, 7, 6};
     try std.testing.expectEqual(@as(usize, 4), try stream.write(&temp));
@@ -752,67 +752,67 @@ test "ReadWriteStream on a fixed buffer - mixed" {
     // Buffered, so shouldn't be in the backing array yet
     try std.testing.expectEqualSlices(u8, &.{4, 5, 6, 7}, buffer[4..8]);
 
-    std.debug.print("\n03. Seek\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n03. Seek\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 8), stream.getPos());
     try stream.seekBy(-4);
 
-    std.debug.print("\n04. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n04. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 4), stream.getPos());
     try std.testing.expectEqual(@as(usize, 4), try stream.read(&temp));
-    std.debug.print("{any}\n", .{temp});
+    if (comptime DEBUG_LOG) std.debug.print("{any}\n", .{temp});
     try std.testing.expectEqualSlices(u8, &.{9, 8, 7, 6}, &temp);
     try std.testing.expectEqualSlices(u8, &.{9, 8, 7, 6}, buffer[4..8]);
 
-    std.debug.print("\n05. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n05. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 8), stream.getPos());
     try std.testing.expectEqual(@as(usize, 4), try stream.read(&temp));
     try std.testing.expectEqualSlices(u8, &.{8, 9, 10, 11}, &temp);
 
-    std.debug.print("\n06. Put back\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n06. Put back\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 12), stream.getPos());
     try stream.putBack(temp[2..]);
 
-    std.debug.print("\n07. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n07. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 10), stream.getPos());
     try std.testing.expectEqual(@as(usize, 4), try stream.read(&temp));
     try std.testing.expectEqualSlices(u8, &.{10, 11, 12, 13}, &temp);
 
-    std.debug.print("\n08. Seek by\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n08. Seek by\n", .{});
+    //if (comptime DEBUG_LOG)  std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 14), stream.getPos());
     try stream.seekBy(47);
 
-    std.debug.print("\n09. Get pos\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n09. Get pos\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 61), stream.getPos());
     try std.testing.expectEqual(@as(u64, 64), try stream.getEndPos());
 
-    std.debug.print("\n10. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n10. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(usize, 3), try stream.read(&temp));
-    std.debug.print("Read: {any}\n", .{temp});
+    if (comptime DEBUG_LOG) std.debug.print("Read: {any}\n", .{temp});
     try std.testing.expectEqualSlices(u8, &.{61, 62, 63, 13}, &temp);
 
-    std.debug.print("\n11. Read\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n11. Read\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 64), stream.getPos());
     try std.testing.expectEqual(@as(usize, 0), try stream.read(&temp));
 
-    std.debug.print("\n12. Write past end\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n12. Write past end\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     // Even though the backing stream does not support more than 64 bytes, this will succeed, as the bytes will be
     // stored in the write buffer
     temp = .{0xA0, 0xA1, 0xA2, 0xA3};
     try std.testing.expectEqual(@as(u64, 64), stream.getPos());
     try std.testing.expectEqual(@as(usize, 4), try stream.write(&temp));
 
-    std.debug.print("\n13. Flush write past end\n", .{});
-    // std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
+    if (comptime DEBUG_LOG) std.debug.print("\n13. Flush write past end\n", .{});
+    // if (comptime DEBUG_LOG) std.debug.print("Pos: {d}, underlying: {d}, read buffer: {d}..{d}\n", .{stream.getPos(), try stream.underlyingGetPos(), stream.read_buf_start, stream.read_buf_end});
     try std.testing.expectEqual(@as(u64, 68), stream.getPos());
     try std.testing.expectError(error.NoSpaceLeft, stream.flushWrite());
 }
