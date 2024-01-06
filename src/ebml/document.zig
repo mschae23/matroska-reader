@@ -263,7 +263,8 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             }
 
             const size = try primitive.readElementDataSize(self.stream.any_reader());
-            std.debug.print("Element data size: {d}\n", .{size});
+
+            if (comptime io.DEBUG_LOG) std.debug.print("Element data size: {d}\n", .{size});
 
             const end_pos: ?usize = if (size == primitive.UNKNOWN_DATA_SIZE) null else self.stream.getPos() + size;
 
@@ -276,9 +277,10 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
         /// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
         /// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
         /// the end of the stream. If it fails, the stream position may end up anywhere within the element.
-        pub fn skipElement(self: *Self) anyerror!void {
+        pub fn skipElement(self: *Self) anyerror!u64 {
             const size = try primitive.readElementDataSize(self.stream.any_reader());
             try self.stream.seekBy(@intCast(size));
+            return size;
         }
 
         pub fn trimPath(self: *Self) void {
@@ -373,7 +375,7 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                                 },
                                 else => {
                                     log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
-                                    try self.skipElement();
+                                    _ = try self.skipElement();
                                 },
                             }
                         }
@@ -391,15 +393,15 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                     },
                     matroska.ID_Void => {
                         log.warn("Skipping Void", .{});
-                        try self.skipElement();
+                        _ = try self.skipElement();
                     },
                     matroska.ID_CRC32 => {
                         log.warn("Skipping CRC32", .{});
-                        try self.skipElement();
+                        _ = try self.skipElement();
                     },
                     else => {
                         log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
-                        try self.skipElement();
+                        _ = try self.skipElement();
                     },
                 }
 
@@ -410,12 +412,14 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
 }
 
 test "EbmlDocument on Matroska test file" {
+    const allocator = std.testing.allocator;
+
     // Tests are run relative to the project directory, apparently
     const file = try std.fs.cwd().openFile("./test/test1.mkv", .{});
     defer file.close();
 
     var stream = io.streamFromFile(file);
-    var document = try EbmlDocument(@TypeOf(stream)).init(std.testing.allocator, &stream);
+    var document = try EbmlDocument(@TypeOf(stream)).init(allocator, &stream);
     defer document.deinit();
 
     try document.readHeader();
@@ -425,5 +429,87 @@ test "EbmlDocument on Matroska test file" {
 
     for (document.doctype_extensions.items) |extension| {
         std.debug.print("  - Name: {s}\n    Version: {d}\n", .{extension.name, extension.version});
+    }
+
+    var id = try document.readElementId();
+
+    while (id.id == matroska.ID_Void) {
+        _ = try document.skipElement();
+        id = try document.readElementId();
+    }
+
+    try std.testing.expectEqual(@as(u64, matroska.ID_Segment), id.id);
+    try document.readMaster(id);
+
+    var element_type: matroska.ElementType = .binary;
+
+    document.trimPath();
+
+    while (document.path_len > 0) {
+        id = try document.readElementId();
+
+        for (0..(document.path_len - 1)) |_| {
+            std.debug.print("  ", .{});
+        }
+
+        search: {
+            inline for (matroska.HOT_ELEMENTS) |item| {
+                if (id.id == item.id) {
+                    std.debug.print("{s}:", .{item.name});
+                    element_type = item.type;
+                    break :search;
+                }
+            }
+
+            inline for (matroska.IMPORTANT_ELEMENTS) |item| {
+                if (id.id == item.id) {
+                    std.debug.print("{s}:", .{item.name});
+                    element_type = item.type;
+                    break :search;
+                }
+            }
+
+            inline for (matroska.ELEMENTS) |item| {
+                if (id.id == item.id) {
+                    std.debug.print("{s}:", .{item.name});
+                    element_type = item.type;
+                    break :search;
+                }
+            }
+
+            element_type = .binary;
+            std.debug.print("Unknown element with ID 0x{X}:", .{id.id});
+        }
+
+        switch (element_type) {
+            .integer, .date => {
+                std.debug.print(" {d}\n", .{try document.readSignedInteger(null)});
+            },
+            .uinteger => {
+                std.debug.print(" {d}\n", .{try document.readUnsignedInteger(null)});
+            },
+            .float => {
+                std.debug.print(" {d}\n", .{try document.readFloat(null)});
+            },
+            .string, .utf8 => {
+                const string = try document.readBinaryAllAlloc(allocator, 256);
+                defer allocator.free(string);
+                std.debug.print(" \"{s}\"\n", .{string});
+            },
+            .master => {
+                std.debug.print(" master\n", .{});
+                try document.readMaster(id);
+            },
+            .binary => {
+                std.debug.print(" {d} bytes\n", .{try document.skipElement()});
+            },
+        }
+
+        document.trimPath();
+
+        if (id.id == matroska.ID_Cluster) {
+            std.debug.print("Stopping after first cluster.", .{});
+            break;
+        }
     }
 }
