@@ -1,14 +1,14 @@
 .{
-    .name = "matroska-reader",
+    .name = "zebml",
     .version = "0.1.0",
     .dependencies = .{
-        .zigargs = .{
-            .url = "https://github.com/MasterQ32/zig-args/archive/3797c1473b48e445d721d40c8fbbe9a7422095ae.tar.gz",
-            .hash = "122012fa395ee8ac94592f3a535ed3899a4485e96ee3d4ec8f82c761bf304b34b870",
-        },
     },
     .paths = .{
-        "src/main.zig",
-        "src/ebml.zig",
+        "src/lib.zig",
+        "src/io.zig",
+        "src/ebml/mod.zig",
+        "src/ebml/primitive.zig",
+        "src/ebml/document.zig",
+        "src/matroska_id_table.zig",
     },
 }

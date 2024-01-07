@@ -1,5 +1,8 @@
-# Matroska reader
-This is an EBML and Matroska reader (and hopefully soon a demuxer), primarily to be used as a library.
+# ZEBML
+This is a library for reading [EBML](https://www.rfc-editor.org/rfc/rfc8794.html) data. In the future, it may also support writing,
+as well as editing files in-place.
+
+Note that it is still unstable and subject to change.
 
 ## License
 Copyright (C) 2024  mschae23

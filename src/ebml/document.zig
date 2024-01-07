@@ -283,6 +283,11 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             return size;
         }
 
+        /// Should be called before [`readElementId`] to ensure that the hierarchy path is accurate for the next element being read.
+        /// This function only handles parent elements with known data sizes; for parent elements with an unknown data size, the path
+        /// of the next element (as specified in the DocType schema) is required, so this can only be handled by the application.
+        ///
+        /// [`readElementId`]: readElementId
         pub fn trimPath(self: *Self) void {
             const pos = self.stream.getPos();
             var i: u8 = 0;
