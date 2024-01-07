@@ -4,8 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "zebml",
+    const lib = b.addModule("zebml", .{
         .root_source_file = .{ .path = "src/lib.zig" },
         .target = target,
         .optimize = optimize,
