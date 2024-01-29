@@ -15,7 +15,7 @@ pub const ElementId = struct {
     id: u64,
 };
 
-/// Stores the raw, encoded form of a variable-sized integer as a `u64`, i. e. it includes the `VINT_WIDTH` and `VINT_MARKER` BITS,
+/// Stores the raw, encoded form of a variable-sized integer as a `u64`, i. e. it includes the `VINT_WIDTH` and `VINT_MARKER` bits,
 /// as well as the number of octets it uses.
 ///
 /// [`getVintValue`] can be used to get its integer value.
@@ -189,7 +189,8 @@ pub fn readFloat(reader: std.io.AnyReader, default: ?f64) anyerror!f64 {
 /// Reads the entire contents of a binary element into the specified buffer.
 ///
 /// If the buffer is not big enough to hold all of the element's data, `error.BufTooSmall` will be returned. In this case, the provided
-/// buffer as well as the current position in the stream will not be modified.
+/// buffer as well as the current position in the stream will not be modified (IMPL NOTE This currently does not seem to be the case;
+/// the function will read past the element data size regardless of outcome).
 ///
 /// If the element size is zero, the function will return without error and without modifying the provided buffer.
 /// This means that the buffer needs to be filled with the element's default value (usually all zeroes) before calling this.
@@ -207,11 +208,11 @@ pub fn readBinaryAllBuf(reader: std.io.AnyReader, buffer: []u8) anyerror!void {
 
     if (size == 0) {
         return;
-    } else if (size < buffer.len) {
+    } else if (size > buffer.len) {
         return error.BufTooSmall;
     }
 
-    return reader.readNoEof(buffer);
+    return reader.readNoEof(buffer[0..size]);
 }
 
 /// Tries to read the entire contents of a binary element by allocating a buffer of the right size using the provided allocator.
@@ -245,33 +246,34 @@ pub fn readBinaryAllAlloc(reader: std.io.AnyReader, allocator: std.mem.Allocator
     return buf;
 }
 
-const BinaryElementReaderContext = struct {
-    reader: std.io.AnyReader,
-    pos: u64, len: u64,
-};
+// TODO Modify this struct to have a `reader` method that returns a GenericReader using this struct's field like a closure
+// const BinaryElementReaderContext = struct {
+//     reader: std.io.AnyReader,
+//     pos: u64, len: u64,
+// };
 
-pub const BinaryElementReader = std.io.GenericReader(BinaryElementReaderContext, anyerror, readBinaryImpl);
+// pub const BinaryElementReader = std.io.GenericReader(BinaryElementReaderContext, anyerror, readBinaryImpl);
 
-/// Read a binary element. This returns a [`BinaryElementReader`] that can be used to read the binary element's data.
-///
-/// The returned reader is invalidated by any operation modifying the position of the reader provided to this method, such as using any
-/// of its read functions or seeking with a `SeekableStream`.
-///
-/// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
-/// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
-/// the end of the stream. If it fails, the stream position may end up anywhere within the element.
-pub fn readBinary(reader: std.io.AnyReader) anyerror!BinaryElementReader {
-    const size = try readElementDataSize(reader);
-    return .{ .context = BinaryElementReaderContext { .reader = reader, .pos = 0, .len = size, }};
-}
+// /// Read a binary element. This returns a [`BinaryElementReader`] that can be used to read the binary element's data.
+// ///
+// /// The returned reader is invalidated by any operation modifying the position of the reader provided to this method, such as using any
+// /// of its read functions or seeking with a `SeekableStream`.
+// ///
+// /// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
+// /// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
+// /// the end of the stream. If it fails, the stream position may end up anywhere within the element.
+// pub fn readBinary(reader: std.io.AnyReader) anyerror!BinaryElementReader {
+//     const size = try readElementDataSize(reader);
+//     return .{ .context = BinaryElementReaderContext { .reader = reader, .pos = 0, .len = size, }};
+// }
 
-// Implement SeekableStream for this as well? Not sure how useful that would be
-// Also, AnySeekableStream doesn't exist
-fn readBinaryImpl(context: BinaryElementReaderContext, buffer: []u8) anyerror!usize {
-    const read = try context.reader.read(buffer[0..@min(buffer.len, context.len - context.pos)]);
-    context.pos += read;
-    return read;
-}
+// // Implement SeekableStream for this as well? Not sure how useful that would be
+// // Also, AnySeekableStream doesn't exist
+// fn readBinaryImpl(context: BinaryElementReaderContext, buffer: []u8) anyerror!usize {
+//     const read = try context.reader.read(buffer[0..@min(buffer.len, context.len - context.pos)]);
+//     context.pos += read;
+//     return read;
+// }
 
 /// Read a date element.
 ///
@@ -494,4 +496,80 @@ test "readFloat" {
     }
 }
 
-// TODO Add tests for the readBinary functions and readDate
+test "readBinaryAllAlloc" {
+    const data: [8]u8 = .{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, };
+    const bytes = .{0b10001000} ++ data;
+
+    var fixedBufferStream = std.io.fixedBufferStream(&bytes);
+    const reader = fixedBufferStream.reader().any();
+    const read = try readBinaryAllAlloc(reader, std.testing.allocator, 64);
+    defer std.testing.allocator.free(read);
+
+    try std.testing.expectEqualSlices(u8, &data, read);
+}
+
+
+test "readBinaryAllBuf" {
+    const data: [8]u8 = .{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, };
+    const bytes = .{0b10001000} ++ data;
+
+    var fixedBufferStream = std.io.fixedBufferStream(&bytes);
+    const reader = fixedBufferStream.reader().any();
+    var buf: [64]u8 = .{0xaa} ** 64;
+    try readBinaryAllBuf(reader, &buf);
+
+    const expected = data ++ .{0xaa} ** 56;
+    try std.testing.expectEqualSlices(u8, &expected, &buf);
+}
+
+
+// test "readBinary" {
+//     const data: [8]u8 = .{ 0x12, 0x34, 0x56, 0x78, 0x90, 0xab, 0xcd, 0xef, };
+//     const bytes = .{0b10001000} ++ data;
+
+//     var fixedBufferStream = std.io.fixedBufferStream(&bytes);
+//     const reader = fixedBufferStream.reader().any();
+//     const data_reader = try readBinary(reader);
+
+//     var buf: [8]u8 = .{0xaa} ** 8;
+//     try std.testing.expectEqual(@as(usize, 8), try data_reader.readAll(&buf));
+//     try std.testing.expectEqualSlices(u8, &data, &buf);
+//     try std.testing.expectError(error.EndOfStream, data_reader.read(&buf));
+// }
+
+test "readDate" {
+    // TODO This is just the same test as "readSignedInteger" above; it may be better to use dedicated example values
+    // TODO Test fails because of invalid data sizes
+    const a: u64 = 0b1000_0010_1111_1110_1101_0100_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
+    const b: u64 = 0b1000_0001_0111_1111_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
+    const c: u64 = 0b0010_0000_0000_0000_0000_0010_0000_0000_0111_1111_0000_0000_0000_0000_0000_0000;
+    const d: u64 = 0b0100_0000_0000_0110_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111_1111;
+    const e: u64 = 0b1000_0100_0000_0000_0000_0000_0011_1111_1111_1111_0000_0000_0000_0000_0000_0000;
+    const f: u64 = 0b1000_0001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
+    const g: u64 = 0b1000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000;
+
+    const vints = [7]u64 {a, b, c, d, e, f, g};
+    var bytes: [7][8]u8 = .{.{0} ** 8} ** 7;
+    var fixedBufferStreams: [7]std.io.FixedBufferStream([]u8) = .{undefined} ** 7;
+    var readers: [7]std.io.AnyReader = .{undefined} ** 7;
+
+    inline for (vints, 0..) |vint, i| {
+        bytes[i] = comptime std.mem.toBytes(std.mem.nativeToBig(u64, vint));
+        fixedBufferStreams[i] = std.io.fixedBufferStream(&bytes[i]);
+        readers[i] = fixedBufferStreams[i].reader().any();
+    }
+
+    // std.debug.print("\n", .{});
+    try std.testing.expectEqual(@as(i64, -300), try readDate(readers[0], null));
+    try std.testing.expectEqual(@as(i64, 127), try readDate(readers[1], null));
+    try std.testing.expectEqual(@as(i64, 127), try readDate(readers[2], null));
+    try std.testing.expectEqual(@as(i64, -1), try readDate(readers[3], null));
+    try std.testing.expectEqual(@as(i64, 16_383), try readDate(readers[4], null));
+    try std.testing.expectEqual(@as(i64, 0), try readDate(readers[5], null));
+    fixedBufferStreams[5].pos = 0;
+    try std.testing.expectEqual(@as(i64, 0), try readDate(readers[5], 70));
+    try std.testing.expectEqual(@as(i64, 0), try readDate(readers[6], null));
+    fixedBufferStreams[6].pos = 0;
+    try std.testing.expectEqual(@as(i64, 70), try readDate(readers[6], 70));
+}
+
