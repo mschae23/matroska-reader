@@ -305,15 +305,15 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                         self.doctype_read_version = @intCast(try self.readUnsignedInteger(1));
                     },
                     matroska.ID_DocTypeExtension => {
-                        try self.readMaster(id);
-                        self.trimPath();
+                        const extension_end_pos = try self.readMaster();
 
                         var name: ?[]u8 = null;
                         var version: ?u32 = null;
 
                         errdefer if (name) |n| self.allocator.free(n);
 
-                        while (self.path_len > 0 and self.path[self.path_len - 1].id.id == id.id) {
+                        while (extension_end_pos == null or self.stream.getPos() < extension_end_pos.?) {
+                            const extension_nest_pos = self.stream.getPos();
                             const extension_nest_id = try self.readElementId();
 
                             switch (extension_nest_id.id) {
@@ -329,7 +329,13 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                                 },
                                 else => {
                                     log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
-                                    _ = try self.skipElement();
+
+                                    if (extension_end_pos == null) {
+                                        try self.stream.seekTo(extension_nest_pos);
+                                        break;
+                                    } else {
+                                        _ = try self.skipElement();
+                                    }
                                 },
                             }
                         }
