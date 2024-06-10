@@ -15,9 +15,6 @@ const matroska = @import("../matroska_id_table.zig");
 pub const EBML_VERSION: u8 = 1;
 const VINTMAX: u64 = primitive.VINTMAX;
 
-/// The maximum depth of nested master elements supported by this EBML reader.
-pub const MAX_NESTING_DEPTH: u8 = 16;
-
 const ElementId = primitive.ElementId;
 
 pub const MasterElementNestData = struct {
@@ -82,14 +79,6 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
         /// The value is allocated memory owned by `EbmlDocument`.
         doctype_extensions: std.ArrayListUnmanaged(DoctypeExtension),
 
-        /// Represents the current path of nested master elements in the document.
-        path: [MAX_NESTING_DEPTH]MasterElementNestData,
-        /// The length of [`path`], in elements. Only elements at indices `0` (inclusive) to `path_len` (exclusive) are valid.
-        /// Elements beyond this slice must be treated as undefined memory.
-        ///
-        /// [`path`]: path
-        path_len: u8,
-
         const Self = @This();
 
         /// Initializes a new `EbmlDocument`.
@@ -106,9 +95,6 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                 .doctype = &.{},
                 .doctype_version = std.math.maxInt(u32), .doctype_read_version = std.math.maxInt(u32),
                 .doctype_extensions = try std.ArrayListUnmanaged(DoctypeExtension).initCapacity(allocator, 0),
-
-                .path = .{undefined} ** MAX_NESTING_DEPTH,
-                .path_len = 0,
             };
         }
 
@@ -257,19 +243,13 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
         /// This function requires the element ID to have been read already, i. e. the input stream position must be on the element size value
         /// of the element. If this function suceeds, the input stream will be positioned on the start (element ID value) of the next element or
         /// the end of the stream. If it fails, the stream position may end up anywhere within the element.
-        pub fn readMaster(self: *Self, id: ElementId) anyerror!void {
-            if (self.path_len == MAX_NESTING_DEPTH - 1) {
-                return error.NestingTooDeep;
-            }
-
+        pub fn readMaster(self: *Self) anyerror!?usize {
             const size = try primitive.readElementDataSize(self.stream.any_reader());
 
             if (comptime io.DEBUG_LOG) std.debug.print("Element data size: {d}\n", .{size});
 
             const end_pos: ?usize = if (size == primitive.UNKNOWN_DATA_SIZE) null else self.stream.getPos() + size;
-
-            self.path[self.path_len] = MasterElementNestData { .id = id, .end_pos = end_pos, };
-            self.path_len += 1;
+            return end_pos;
         }
 
         /// Skip an element.
@@ -283,43 +263,12 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             return size;
         }
 
-        /// Should be called before [`readElementId`] to ensure that the hierarchy path is accurate for the next element being read.
-        /// This function only handles parent elements with known data sizes; for parent elements with an unknown data size, the path
-        /// of the next element (as specified in the DocType schema) is required, so this can only be handled by the application.
-        ///
-        /// [`readElementId`]: readElementId
-        pub fn trimPath(self: *Self) void {
-            const pos = self.stream.getPos();
-            var i: u8 = 0;
-
-            while (i != self.path_len) {
-                // Reverse order. Should be safe, as:
-                //      i != path_len
-                //   -> i <  path_len
-                //   -> (path_len - i) >= 1
-                //   -> (path_len - i) - 1 >= 0
-                const j = self.path_len - i - 1;
-
-                const data = self.path[j];
-                i += 1;
-
-                if (data.end_pos) |end_pos| {
-                    if (end_pos <= pos) {
-                        self.path_len = j;
-                        i = 0;
-                    }
-                }
-            }
-        }
-
         /// Read the EBML header.
         ///
         /// If the header is not found or is not correct, `error.InvalidHeader` will be returned.
         ///
         /// Do not call this function multiple times for the same instance of `EbmlDocument`.
         pub fn readHeader(self: *Self) anyerror!void {
-            std.debug.assert(0 == self.path_len);
-
             const ebml_id = try self.readElementId();
 
             if (ebml_id.id != matroska.ID_EBML) {
@@ -327,10 +276,10 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
             }
 
             // \EBML
-            try self.readMaster(ebml_id);
-            self.trimPath();
+            const header_end_pos = try self.readMaster();
 
-            while (self.path_len > 0 and self.path[self.path_len - 1].id.id == ebml_id.id) {
+            while (header_end_pos == null or self.stream.getPos() < header_end_pos.?) {
+                const current_element_pos = self.stream.getPos();
                 const id = try self.readElementId();
 
                 switch (id.id) {
@@ -404,13 +353,15 @@ pub fn EbmlDocument(comptime ReadWriteStream: type) type {
                         log.warn("Skipping CRC32", .{});
                         _ = try self.skipElement();
                     },
-                    else => {
+                    else => if (header_end_pos == null) {
+                        log.warn("Found unknown element (ID 0x{X}), assuming end of EBML header", .{id.id});
+                        try self.stream.seekTo(current_element_pos);
+                        break;
+                    } else {
                         log.warn("Skipping unknown element (ID 0x{X})", .{id.id});
                         _ = try self.skipElement();
                     },
                 }
-
-                self.trimPath();
             }
         }
     };

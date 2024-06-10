@@ -4,17 +4,16 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const lib = b.addStaticLibrary(.{
-        .name = "zebml",
-        .root_source_file = .{ .path = "src/lib.zig" },
+    _ = b.addModule("zebml", .{
+        .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
 
-    b.installArtifact(lib);
+    // b.installArtifact(lib);
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/lib.zig" },
+        .root_source_file = b.path("src/lib.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -23,6 +22,13 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_main_tests.step);
+
+    const lib = b.addStaticLibrary(.{
+        .name = "zebml",
+        .root_source_file = b.path("src/lib.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
 
     const install_docs = b.addInstallDirectory(.{
         // running exe.getEmittedDocs() is what actually triggers generation

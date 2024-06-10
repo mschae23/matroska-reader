@@ -4,11 +4,10 @@
     .dependencies = .{
     },
     .paths = .{
-        "src/lib.zig",
-        "src/io.zig",
-        "src/ebml/mod.zig",
-        "src/ebml/primitive.zig",
-        "src/ebml/document.zig",
-        "src/matroska_id_table.zig",
+        "build.zig",
+        "build.zig.zon",
+        "README.md",
+        "LICENSE",
+        "src/",
     },
 }
